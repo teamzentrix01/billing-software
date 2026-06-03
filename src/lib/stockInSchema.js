@@ -1,7 +1,7 @@
 import { query } from '@/lib/db';
 
 // Bump this version when schema migrations change so hot-reload re-runs them
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 let ensuredVersion = 0;
 
 export async function ensureStockInSchema() {
@@ -58,6 +58,15 @@ export async function ensureStockInSchema() {
     ALTER TABLE stock_in
       ADD COLUMN IF NOT EXISTS vendor_id INTEGER;
     CREATE INDEX IF NOT EXISTS idx_stock_in_vendor_id ON stock_in(vendor_id);
+  `);
+
+  await query(`
+    ALTER TABLE stock_in_items
+      ADD COLUMN IF NOT EXISTS mrp NUMERIC(14, 2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS selling_price NUMERIC(14, 2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS serial_number VARCHAR(120),
+      ADD COLUMN IF NOT EXISTS scan_code VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS meta JSONB NOT NULL DEFAULT '{}'::jsonb;
   `);
 
   await query(`

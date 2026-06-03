@@ -6,6 +6,7 @@ import { ensureStoresSchema } from '@/lib/storesSchema';
 import { auditLog, requireAuth, requirePermission, requireStore } from '@/lib/api-protection';
 import { ensureVendorInvoicesSchema } from '@/lib/vendorInvoicesSchema';
 import { ensureVendorsSchema } from '@/lib/vendorsSchema';
+import { createMarginApprovalRequest, ensureMarginApprovalSchema } from '@/lib/marginApprovalSchema';
 
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -149,10 +150,11 @@ export async function POST(request, { params }) {
       await ensureStoresSchema();
       await ensureVendorsSchema();
       await ensureVendorInvoicesSchema();
+      await ensureMarginApprovalSchema();
       const auth = await requireAuth(request);
       if (auth.error) return auth.error;
 
-      const permissionCheck = requirePermission(auth.user, 'MANAGE_INVENTORY');
+      const permissionCheck = requirePermission(auth.user, 'MANAGE_INVENTORY', 'MANAGE_PURCHASE_ORDERS');
       if (permissionCheck.error) return permissionCheck.error;
     const body = await request.json();
     const form  = body.form  || {};
@@ -167,7 +169,7 @@ export async function POST(request, { params }) {
     const productIds = [...new Set(items.map((it) => Number(it.product_id)).filter(Boolean))];
 
     const catalogRes = await query(
-      `SELECT id, name, cost_price, unit FROM products WHERE id = ANY($1::int[])`,
+      `SELECT id, name, cost_price, mrp, selling_price, unit FROM products WHERE id = ANY($1::int[])`,
       [productIds]
     );
     const catalogMap = Object.fromEntries(catalogRes.rows.map((r) => [r.id, r]));
@@ -218,7 +220,7 @@ export async function POST(request, { params }) {
     );
     const hasPurchaseOrder = stockInRow.rows[0].reference_type === 'purchase_order' && String(stockInRow.rows[0].reference_id || '').trim();
 
-    if (!hasPurchaseOrder && !isWarehouseSource) {
+    if (!hasPurchaseOrder && !isWarehouseSource && !isVendorToStoreReceipt) {
       const previousStockRes = await query(
         `SELECT sii.product_id, p.name, COUNT(*)::int AS receipt_count
          FROM stock_in_items sii
@@ -326,6 +328,7 @@ export async function POST(request, { params }) {
     const client = await getClient();
     try {
       await client.query('BEGIN');
+      let marginApprovalCount = 0;
 
       // ── 4. Replace line items — use catalog name as source of truth ─────────
       await client.query('DELETE FROM stock_in_items WHERE stock_in_id = $1', [id]);
@@ -338,6 +341,14 @@ export async function POST(request, { params }) {
         const qty          = Number(item.qty        || 1);
         const costPrice    = Number(item.cost_price || 0);
         const taxValue     = Number(item.tax_value  || 0);
+        const mrp          = Number(item.mrp || 0);
+        const sellingPrice = Number(item.selling_price || item.sellingPrice || 0);
+        const itemMeta     = {
+          source: item.source || null,
+          scanCode: item.scan_code || item.scanCode || '',
+          serialNumber: item.serial_number || item.serialNumber || '',
+          remoteGrn: Boolean(item.remoteGrn || item.source === 'remote_grn'),
+        };
 
         if (isStoreDestination && !isVendorToStoreReceipt) {
           const allocations = await allocateWarehouseBatchStock(client, {
@@ -350,8 +361,8 @@ export async function POST(request, { params }) {
           for (const allocation of allocations) {
             const stockInItemRes = await client.query(
               `INSERT INTO stock_in_items
-                 (stock_in_id, product_id, product_name, qty, cost_price, tax_value, batch_no, mfg_date, expiry_date, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+                 (stock_in_id, product_id, product_name, qty, cost_price, tax_value, batch_no, mfg_date, expiry_date, mrp, selling_price, serial_number, scan_code, meta, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, NOW())
                RETURNING id`,
               [
                 id,
@@ -363,6 +374,11 @@ export async function POST(request, { params }) {
                 allocation.batchNo || null,
                 allocation.mfgDate || null,
                 allocation.expiryDate || null,
+                mrp,
+                sellingPrice,
+                itemMeta.serialNumber || null,
+                itemMeta.scanCode || null,
+                JSON.stringify(itemMeta),
               ]
             );
 
@@ -391,8 +407,8 @@ export async function POST(request, { params }) {
           for (const batch of batchRows) {
             const stockInItemRes = await client.query(
               `INSERT INTO stock_in_items
-                 (stock_in_id, product_id, product_name, qty, cost_price, tax_value, batch_no, mfg_date, expiry_date, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+                 (stock_in_id, product_id, product_name, qty, cost_price, tax_value, batch_no, mfg_date, expiry_date, mrp, selling_price, serial_number, scan_code, meta, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, NOW())
                RETURNING id`,
               [
                 id,
@@ -404,6 +420,11 @@ export async function POST(request, { params }) {
                 batch.batchNo || null,
                 normalizeDate(batch.mfgDate) || null,
                 normalizeDate(batch.expiryDate) || null,
+                mrp,
+                sellingPrice,
+                itemMeta.serialNumber || null,
+                itemMeta.scanCode || null,
+                JSON.stringify(itemMeta),
               ]
             );
 
@@ -422,20 +443,42 @@ export async function POST(request, { params }) {
           }
         }
 
-        // ── 5. Update products.cost_price if the GRN cost differs ─────────────
-        //    Only update when the incoming cost is > 0 so zeroed-out entries
-        //    don't wipe a previously set cost.
-        if (costPrice > 0) {
-          await client.query(
-            `UPDATE products SET cost_price = $1, updated_at = NOW() WHERE id = $2`,
-            [costPrice, pid]
-          );
-        }
+        const saleabilityRes = destinationId
+          ? await client.query(
+              `SELECT mrp, selling_price
+               FROM product_saleability
+               WHERE product_id = $1 AND store_id = $2
+               LIMIT 1`,
+              [pid, destinationId]
+            )
+          : { rows: [] };
+        const saleability = saleabilityRes.rows[0] || {};
 
-        // ── 6. Upsert product_saleability so product is active at this store ──
-        //    - If the row doesn't exist yet, create it (selling_price/mrp default 0
-        //      and should be set by the catalog manager separately).
-        //    - If it exists, just make sure is_active = true and touch updated_at.
+        const approvalRequest = await createMarginApprovalRequest(client, {
+          stockInId: id,
+          stockInItemId: null,
+          sourceType: stockInRow.rows[0].reference_type || 'grn',
+          sourceReference: stockInRow.rows[0].transaction_id || String(id),
+          productId: pid,
+          storeId: destinationId,
+          requestedBy: auth.user.id,
+          currentCostPrice: catalogEntry.cost_price,
+          requestedCostPrice: costPrice,
+          currentMrp: saleability.mrp ?? catalogEntry.mrp,
+          requestedMrp: mrp,
+          currentSellingPrice: saleability.selling_price ?? catalogEntry.selling_price,
+          requestedSellingPrice: sellingPrice,
+          remarks: `Price change requested from ${stockInRow.rows[0].transaction_id || `Stock In ${id}`}`,
+          meta: {
+            productName,
+            invoiceNumber: form.invoice_number || null,
+            source: itemMeta.remoteGrn ? 'remote_grn' : 'stock_in_confirm',
+          },
+        });
+        if (approvalRequest?.id) marginApprovalCount += 1;
+
+        // Keep product active at this store after receipt. CP/MRP/SP changes
+        // are applied only after admin approval.
         if (destinationId) {
           await client.query(
             `INSERT INTO product_saleability
@@ -586,8 +629,9 @@ export async function POST(request, { params }) {
         totalCost,
         totalTax,
         vendorId,
+        marginApprovalCount,
       });
-      return NextResponse.json({ success: true, id, totalItems, totalCost, totalTax });
+      return NextResponse.json({ success: true, id, totalItems, totalCost, totalTax, marginApprovalCount });
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;

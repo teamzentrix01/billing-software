@@ -112,6 +112,8 @@ export const menuItems = [
           { label: 'Purchase Orders',    href: '/purchase/purchase-orders' },
           { label: 'Quotation Comparison', href: '/purchase/quotations' },
           { label: 'GRN',                href: '/purchase/grn' },
+          { label: 'Remote GRN',         href: '/purchase/remote-grn' },
+          { label: 'Margin Approvals',   href: '/purchase/margin-approvals' },
           { label: 'Purchase Returns',   href: '/purchase/returns' },
           { label: 'Vendor Invoices',    href: '/purchase/vendor-invoices' },
           { label: 'Invoice Settlement', href: '/purchase/invoice-settlement' },
