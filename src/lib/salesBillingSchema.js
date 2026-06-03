@@ -74,7 +74,16 @@ const CREATE_CASHIER_CLOSINGS_SQL = `
     opening_cash NUMERIC(14, 2) NOT NULL DEFAULT 0,
     expected_cash NUMERIC(14, 2) NOT NULL DEFAULT 0,
     actual_cash NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    counted_cash NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    handover_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    manager_received_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
     variance NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    handover_status VARCHAR(40) NOT NULL DEFAULT 'pending_handover',
+    handed_over_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    handed_over_at TIMESTAMPTZ,
+    verified_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    verified_at TIMESTAMPTZ,
+    denominations JSONB NOT NULL DEFAULT '{}'::jsonb,
     payment_breakup JSONB NOT NULL DEFAULT '{}'::jsonb,
     remarks TEXT,
     meta JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -186,6 +195,28 @@ const MIGRATE_SALES_BILLING_SQL = `
     ADD COLUMN IF NOT EXISTS reference_no VARCHAR(120),
     ADD COLUMN IF NOT EXISTS meta JSONB NOT NULL DEFAULT '{}'::jsonb,
     ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+  ALTER TABLE cashier_closings
+    ADD COLUMN IF NOT EXISTS counted_cash NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS handover_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS manager_received_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS handover_status VARCHAR(40) NOT NULL DEFAULT 'pending_handover',
+    ADD COLUMN IF NOT EXISTS handed_over_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS handed_over_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS verified_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS denominations JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+  UPDATE cashier_closings
+  SET counted_cash = actual_cash
+  WHERE counted_cash = 0 AND actual_cash <> 0;
+
+  UPDATE cashier_closings
+  SET handover_amount = actual_cash
+  WHERE handover_amount = 0 AND actual_cash <> 0;
+
+  CREATE INDEX IF NOT EXISTS idx_cashier_closings_store_handover_status
+    ON cashier_closings(store_id, handover_status);
 
   ALTER TABLE pos_held_bills
     ADD COLUMN IF NOT EXISTS client_hold_id VARCHAR(120),

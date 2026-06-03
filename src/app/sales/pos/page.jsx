@@ -378,6 +378,7 @@ export default function POSPage() {
           setOpeningCash(String(json.data.session.openingCash || 0));
         } else if (json.data.selectedStoreId) {
           setSelectedStoreId(String(json.data.selectedStoreId));
+          setOpeningCash('0');
         } else {
           setSession(null);
         }
@@ -1027,10 +1028,10 @@ export default function POSPage() {
         body: JSON.stringify({
           userId: user.id,
           storeId: Number(selectedStoreId),
-          openingCash: toNumber(openingCash),
           counterName: counterName || 'POS Counter',
           deviceUid,
           counterUid: deviceUid,
+          openingCash: toNumber(openingCash),
         }),
       });
       const json = await res.json();
@@ -1055,13 +1056,18 @@ export default function POSPage() {
     try {
       const res = await fetch('/api/sales-order/closing', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: session.sessionId, openingCash: toNumber(openingCash), remarks: closingRemarks }),
+        body: JSON.stringify({
+          sessionId: session.sessionId,
+          actualCash: toNumber(actualCash),
+          handoverAmount: toNumber(actualCash),
+          remarks: closingRemarks,
+        }),
       });
       const json = await res.json();
       if (json.success) {
         setSession(null); setCloseSessionModal(false); setClosingSummary(null);
         setClosingRemarks(''); setActualCash('0'); clearCart();
-        showToast('Session closed successfully');
+        showToast('Session closed. Cash is pending manager verification.');
       } else showToast(json.message || 'Failed to close session', 'error');
     } catch { showToast('Failed to close session', 'error'); }
     finally { setIsProcessing(false); }
@@ -2005,6 +2011,9 @@ export default function POSPage() {
                   placeholder="Opening cash"
                   className={inputClassName}
                 />
+                <p className="text-xs font-medium text-slate-500">
+                  Enter the opening float physically handed to this employee drawer. Use 0 if no float is assigned.
+                </p>
                 <input
                   type="text"
                   value={counterName}
@@ -2060,6 +2069,7 @@ export default function POSPage() {
                       <ClosingStat label="Opening Cash" value={formatCurrency(closingSummary.totals.openingCash)} />
                       <ClosingStat label="Total Sale" value={formatCurrency(closingSummary.totals.grossSales)} />
                       <ClosingStat label="Cash Sale" value={formatCurrency(closingSummary.totals.cashSales)} />
+                      <ClosingStat label="Withdrawn" value={formatCurrency(closingSummary.totals.cashWithdrawals)} />
                       <ClosingStat label="Card Sale" value={formatCurrency(closingSummary.totals.cardSales)} />
                       <ClosingStat label="UPI Sale" value={formatCurrency(closingSummary.totals.upiSales)} />
                       <ClosingStat label="Paid Total" value={formatCurrency(closingSummary.totals.paidTotal)} />
@@ -2069,11 +2079,18 @@ export default function POSPage() {
                   </div>
                 ) : null}
                 <div>
-                  <label className="text-[10px] font-black text-slate-400 tracking-widest uppercase block mb-1.5">Collected Cash (auto calculated)</label>
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                    <p className="text-lg font-black text-emerald-900">{formatCurrency(toNumber(actualCash))}</p>
-                    <p className="mt-1 text-[11px] font-medium text-emerald-700">Calculated from cash payments in this session. Employees cannot edit this amount.</p>
-                  </div>
+                  <label className="text-[10px] font-black text-slate-400 tracking-widest uppercase block mb-1.5">Counted Cash / Handover Amount</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={actualCash}
+                    onChange={(e) => setActualCash(e.target.value)}
+                    className="w-full rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-lg font-black text-emerald-900 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                  />
+                  <p className="mt-1 text-[11px] font-medium text-emerald-700">
+                    This is the cash the employee is handing to manager. Variance is tracked against expected cash.
+                  </p>
                 </div>
                 {!canCloseSessionNow && (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">

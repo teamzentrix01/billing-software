@@ -9,6 +9,7 @@ export const menuItems = [
         label: 'Point of Sale', icon: 'ti-credit-card',
         items: [
           { label: 'POS Interface',    href: '/sales/pos' },
+          { label: 'Store Cash Tracking', href: '/sales/store-cash' },
           { label: 'Returns & Exchange', href: '/sales/returns' },
         ],
       },
