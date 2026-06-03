@@ -56,7 +56,8 @@ function StatCard({ label, value, tone = 'slate' }) {
 }
 
 export default function StoreCashPage() {
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [verifyingId, setVerifyingId] = useState(null);
   const [data, setData] = useState(null);
@@ -74,28 +75,38 @@ export default function StoreCashPage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  async function loadCash() {
-    setLoading(true);
+  async function loadCash({ silent = false, showErrors = true } = {}) {
+    if (silent) {
+      setRefreshing(true);
+    } else if (!data) {
+      setInitialLoading(true);
+    } else {
+      setRefreshing(true);
+    }
+
     try {
       const res = await fetch('/api/store-cash', { cache: 'no-store' });
       const json = await res.json();
       if (json.success) {
         setData(json.data);
       } else {
-        setData(null);
-        showToast(json.message || 'Failed to load store cash', 'error');
+        if (!silent) setData(null);
+        if (showErrors) showToast(json.message || 'Failed to load store cash', 'error');
       }
     } catch {
-      setData(null);
-      showToast('Failed to load store cash', 'error');
+      if (!silent) setData(null);
+      if (showErrors) showToast('Failed to load store cash', 'error');
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
+      setRefreshing(false);
     }
   }
 
   useEffect(() => {
     loadCash();
-    const timer = setInterval(loadCash, 10000);
+    const timer = setInterval(() => {
+      loadCash({ silent: true, showErrors: false });
+    }, 10000);
     return () => clearInterval(timer);
   }, []);
 
@@ -123,7 +134,7 @@ export default function StoreCashPage() {
           remarks: '',
         });
         showToast('Cash withdrawal recorded');
-        await loadCash();
+        await loadCash({ silent: true });
       } else {
         showToast(json.message || 'Failed to record withdrawal', 'error');
       }
@@ -160,7 +171,7 @@ export default function StoreCashPage() {
           delete next[handover.id];
           return next;
         });
-        await loadCash();
+        await loadCash({ silent: true });
       } else {
         showToast(json.message || 'Failed to verify handover', 'error');
       }
@@ -199,15 +210,15 @@ export default function StoreCashPage() {
             </div>
             <button
               type="button"
-              onClick={loadCash}
-              disabled={loading}
+              onClick={() => loadCash({ silent: true })}
+              disabled={refreshing}
               className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
             >
-              Refresh
+              {refreshing ? 'Refreshing...' : 'Refresh'}
             </button>
           </div>
 
-          {loading ? (
+          {initialLoading ? (
             <div className="rounded-lg border border-slate-200 bg-white p-8 text-center text-sm font-semibold text-slate-500">
               Loading store cash...
             </div>
