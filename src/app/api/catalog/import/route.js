@@ -285,7 +285,18 @@ async function resolveTaxIdForImport(client, taxName) {
      LIMIT 1`,
     [`%${parsed.type}%`, parsed.rate]
   );
-  return byNameAndRate.rows[0]?.id || null;
+  if (byNameAndRate.rows.length) return byNameAndRate.rows[0].id;
+
+  const byRate = await client.query(
+    `SELECT id
+     FROM taxes
+     WHERE ABS(COALESCE(rate, 0)::numeric - $1::numeric) < 0.001
+       AND COALESCE(is_active, true) = true
+     ORDER BY id DESC
+     LIMIT 1`,
+    [parsed.rate]
+  );
+  return byRate.rows[0]?.id || null;
 }
 
 async function ensureReferenceId(client, table, name, { categoryId = null, manufacturerId = null } = {}) {
@@ -430,8 +441,7 @@ async function insertProductWithIntegrations(client, row, user) {
   if (normalizeText(row.manufacturer_name) && !manufacturerId) referenceErrors.push(`Manufacturer "${row.manufacturer_name}" not found`);
   if (normalizeText(row.department_name) && !departmentId) referenceErrors.push(`Department "${row.department_name}" not found`);
   if (normalizeText(row.income_head_name) && !incomeHeadId) referenceErrors.push(`Income Head "${row.income_head_name}" not found`);
-  if (includeTax && normalizeText(taxName) && !taxId) referenceErrors.push(`GST "${taxName}" not found`);
-  if (includeTax && !taxId) referenceErrors.push('GST slab is required when include_tax is Yes');
+  if (includeTax && !normalizeText(taxName)) referenceErrors.push('Select one GST column when include_tax is Yes');
   if (inventoryStoreId) {
     const storeCheck = requireStore(user, inventoryStoreId);
     if (storeCheck.error) referenceErrors.push(`No access to inventory store "${row.inventory_store_name}"`);
