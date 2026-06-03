@@ -13,6 +13,16 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function toQty(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.trunc(parsed);
+}
+
+function formatQty(value) {
+  return String(toQty(value));
+}
+
 function money(value) {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -22,7 +32,7 @@ function money(value) {
 }
 
 function lineCost(item) {
-  return toNumber(item.qty) * toNumber(item.cost_price);
+  return toQty(item.qty) * toNumber(item.cost_price);
 }
 
 function lineTax(item) {
@@ -119,7 +129,7 @@ export default function RemoteGrnPage() {
   }, []);
 
   const totals = useMemo(() => {
-    const itemQty = items.reduce((sum, item) => sum + toNumber(item.qty), 0);
+    const itemQty = items.reduce((sum, item) => sum + toQty(item.qty), 0);
     const itemCost = items.reduce((sum, item) => sum + lineCost(item), 0);
     const tax = items.reduce((sum, item) => sum + lineTax(item), 0);
     const other = toNumber(form.otherCharges);
@@ -134,8 +144,9 @@ export default function RemoteGrnPage() {
   const updateForm = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
   const updateItem = (rowId, key, value) => {
+    const nextValue = key === 'qty' ? String(toQty(value) || '') : value;
     setItems((current) =>
-      current.map((item) => (item.rowId === rowId ? { ...item, [key]: value } : item))
+      current.map((item) => (item.rowId === rowId ? { ...item, [key]: nextValue } : item))
     );
   };
 
@@ -170,7 +181,7 @@ export default function RemoteGrnPage() {
         if (!existing) return [makeRow(json.product, code), ...current];
         return current.map((item) =>
           item.rowId === existing.rowId
-            ? { ...item, qty: String(toNumber(item.qty) + 1 || 1), scanCode: code }
+            ? { ...item, qty: String(toQty(item.qty) + 1 || 1), scanCode: code }
             : item
         );
       });
@@ -189,7 +200,7 @@ export default function RemoteGrnPage() {
     if (!items.length) return 'Scan at least one product';
     const invalid = items.find((item) =>
       !item.product_id ||
-      toNumber(item.qty) <= 0 ||
+      toQty(item.qty) <= 0 ||
       toNumber(item.mrp) < 0 ||
       toNumber(item.cost_price) < 0 ||
       toNumber(item.selling_price) < 0
@@ -202,7 +213,7 @@ export default function RemoteGrnPage() {
     sourceItems.map((item) => ({
       product_id: item.product_id,
       productName: item.productName,
-      qty: toNumber(item.qty),
+      qty: toQty(item.qty),
       mrp: toNumber(item.mrp),
       cost_price: toNumber(item.cost_price),
       selling_price: toNumber(item.selling_price),
@@ -325,7 +336,7 @@ export default function RemoteGrnPage() {
         barcode: item.barcode || '',
         sku: item.sku || '',
         scanCode: item.scanCode || item.barcode || item.sku || '',
-        qty: item.qty || '',
+        qty: formatQty(item.qty),
         mrp: item.mrp || '',
         cost_price: item.costPrice || '',
         selling_price: item.sellingPrice || '',
@@ -362,7 +373,7 @@ export default function RemoteGrnPage() {
       const sourceItems = (json.items || []).map((item) => ({
         product_id: item.productId,
         productName: item.productName,
-        qty: item.qty,
+        qty: toQty(item.qty),
         mrp: item.mrp,
         cost_price: item.costPrice,
         selling_price: item.sellingPrice,
@@ -525,7 +536,7 @@ export default function RemoteGrnPage() {
                 <div className="grid gap-3 md:grid-cols-4">
                   <div className="rounded-lg bg-slate-50 p-3">
                     <p className="text-xs font-black uppercase tracking-widest text-slate-400">Total Qty</p>
-                    <p className="mt-1 text-lg font-black text-slate-900">{totals.itemQty}</p>
+                    <p className="mt-1 text-lg font-black text-slate-900">{formatQty(totals.itemQty)}</p>
                   </div>
                   <div className="rounded-lg bg-slate-50 p-3">
                     <p className="text-xs font-black uppercase tracking-widest text-slate-400">Item Cost</p>
@@ -596,9 +607,10 @@ export default function RemoteGrnPage() {
                               <input
                                 type="number"
                                 min="0"
-                                step="0.01"
+                                step={key === 'qty' ? '1' : '0.01'}
                                 value={item[key]}
                                 onChange={(event) => updateItem(item.rowId, key, event.target.value)}
+                                onBlur={(event) => key === 'qty' && updateItem(item.rowId, key, event.target.value)}
                                 className="h-9 w-24 rounded-lg border border-slate-300 px-2 text-sm outline-none focus:border-blue-500"
                               />
                             </td>
@@ -661,9 +673,10 @@ export default function RemoteGrnPage() {
                             <input
                               type="number"
                               min="0"
-                              step="0.01"
+                              step={key === 'qty' ? '1' : '0.01'}
                               value={item[key]}
                               onChange={(event) => updateItem(item.rowId, key, event.target.value)}
+                              onBlur={(event) => key === 'qty' && updateItem(item.rowId, key, event.target.value)}
                               className="h-10 w-full rounded-lg border border-slate-300 px-2 text-sm outline-none focus:border-blue-500"
                             />
                           </label>
@@ -713,7 +726,7 @@ export default function RemoteGrnPage() {
                           {record.status}
                         </span>
                       </div>
-                      <p className="mt-1 text-xs font-semibold text-slate-500">{record.totalItems} qty - {money(record.totalCost)}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">{formatQty(record.totalItems)} qty - {money(record.totalCost)}</p>
                       {record.status !== 'confirmed' && (
                         <div className="mt-3 grid grid-cols-2 gap-2">
                           <button

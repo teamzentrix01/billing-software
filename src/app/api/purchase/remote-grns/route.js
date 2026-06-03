@@ -10,6 +10,12 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function toQty(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.trunc(parsed);
+}
+
 function normalizeDate(value) {
   if (!value) return null;
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return value.trim();
@@ -23,7 +29,7 @@ function mapItem(item) {
     id: item.id,
     productId: item.product_id ?? item.productId,
     productName: item.product_name ?? item.productName,
-    qty: toNumber(item.qty),
+    qty: toQty(item.qty),
     costPrice: toNumber(item.cost_price ?? item.costPrice),
     taxValue: toNumber(item.tax_value ?? item.taxValue),
     taxRate: toNumber(item.tax_rate ?? item.taxRate ?? item.meta?.taxRate),
@@ -230,7 +236,7 @@ export async function GET(request) {
         vendorName: row.vendor_name || '',
         destination: row.destination_name || '',
         status: row.status || 'draft',
-        totalItems: toNumber(row.total_items || row.item_qty_sum),
+        totalItems: toQty(row.total_items || row.item_qty_sum),
         totalCost: toNumber(row.total_cost || row.items_cost_sum),
         totalTax: toNumber(row.total_tax),
         createdAt: row.created_at,
@@ -276,7 +282,7 @@ export async function PUT(request) {
     let totalTax = 0;
     const normalizedItems = items.map((item) => {
       const productId = Number(item.product_id || item.productId);
-      const qty = toNumber(item.qty);
+      const qty = toQty(item.qty);
       const costPrice = toNumber(item.cost_price ?? item.costPrice);
       const taxRate = toNumber(item.tax_rate ?? item.taxRate);
       const explicitTaxValue = item.tax_value ?? item.taxValue;
@@ -344,7 +350,12 @@ export async function PUT(request) {
         totalCost,
         totalTax,
         body.remarks || null,
-        JSON.stringify({ updatedFrom: 'remote_grn_page', updatedBy: auth.user?.id || null }),
+        JSON.stringify({
+          source: 'remote_grn',
+          sourceType: 'vendor',
+          updatedFrom: 'remote_grn_page',
+          updatedBy: auth.user?.id || null,
+        }),
       ]
     );
 
@@ -424,7 +435,7 @@ export async function POST(request) {
 
     const normalizedItems = items.map((item) => {
       const productId = Number(item.product_id || item.productId);
-      const qty = toNumber(item.qty);
+      const qty = toQty(item.qty);
       const costPrice = toNumber(item.cost_price ?? item.costPrice);
       const taxRate = toNumber(item.tax_rate ?? item.taxRate);
       const explicitTaxValue = item.tax_value ?? item.taxValue;
@@ -482,6 +493,7 @@ export async function POST(request) {
         body.remarks || null,
         JSON.stringify({
           source: 'remote_grn',
+          sourceType: 'vendor',
           createdFrom: 'barcode_scan',
           createdBy: auth.user?.id || null,
           clientMeta: body.meta || {},
