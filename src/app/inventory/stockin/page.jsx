@@ -56,8 +56,9 @@ async function postStockIn(payload) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error("Failed to create stock in");
-  return res.json();
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || "Failed to create stock in");
+  return json;
 }
 
 const tableHeaders = [
@@ -716,7 +717,7 @@ export default function StockInPage() {
       );
     } catch (err) {
       console.error(err);
-      alert("Failed to create stock in");
+      alert(err.message || "Failed to create stock in");
     } finally {
       setSubmitting(false);
     }

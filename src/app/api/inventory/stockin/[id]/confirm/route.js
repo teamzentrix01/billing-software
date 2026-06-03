@@ -208,6 +208,7 @@ export async function POST(request, { params }) {
     const isWarehouseDestination = destinationLocationType === 'warehouse';
     const stockInMeta = typeof stockInRow.rows[0].meta === 'object' ? stockInRow.rows[0].meta : {};
     const sourceType = String(form.sourceType || stockInMeta.sourceType || '').toLowerCase();
+    const isWarehouseSource = sourceType === 'warehouse';
     const isVendorToStoreReceipt = isStoreDestination && (
       stockInRow.rows[0].reference_type === 'purchase_order' ||
       stockInRow.rows[0].vendor_id ||
@@ -217,7 +218,7 @@ export async function POST(request, { params }) {
     );
     const hasPurchaseOrder = stockInRow.rows[0].reference_type === 'purchase_order' && String(stockInRow.rows[0].reference_id || '').trim();
 
-    if (!hasPurchaseOrder) {
+    if (!hasPurchaseOrder && !isWarehouseSource) {
       const previousStockRes = await query(
         `SELECT sii.product_id, p.name, COUNT(*)::int AS receipt_count
          FROM stock_in_items sii

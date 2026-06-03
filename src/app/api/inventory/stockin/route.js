@@ -165,6 +165,7 @@ export async function POST(request) {
 
     const payload = await request.json();
     const sourceType = String(payload.sourceType || payload.source_type || 'warehouse').toLowerCase();
+    const isWarehouseSource = sourceType === 'warehouse';
     const destinationId = payload.destination ? Number(payload.destination) : null;
     if (!destinationId && auth.user.role !== 'super_admin') {
       return NextResponse.json({ error: 'Store destination is required for your account' }, { status: 403 });
@@ -195,7 +196,7 @@ export async function POST(request) {
       const method = payload.method || 'new';
       const referenceType = method === 'purchase_order' ? 'purchase_order' : null;
       const referenceId = payload.purchaseOrderId || payload.purchase_order_id || null;
-      if (destinationId && method !== 'purchase_order' && sourceType !== 'vendor') {
+      if (destinationId && method !== 'purchase_order' && !isWarehouseSource && sourceType !== 'vendor') {
         const previousStockIn = await client.query(
           `SELECT id
              FROM stock_in
