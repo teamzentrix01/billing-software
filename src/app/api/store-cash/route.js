@@ -297,7 +297,7 @@ export async function GET(request) {
     const auth = await extractAuthUser(request);
     if (auth.error || !auth.user) return errorResponse(auth.error || 'Unauthorized', 401);
 
-    const permissionCheck = requirePermission(auth.user, 'OPEN_CLOSE_SESSION', 'MANAGE_POS', 'MANAGE_BILLING', 'VIEW_REPORTS', 'VIEW_STORE_REPORTS');
+    const permissionCheck = requirePermission(auth.user, 'CREATE_POS_BILL', 'OPEN_CLOSE_SESSION', 'MANAGE_POS', 'MANAGE_BILLING', 'VIEW_REPORTS', 'VIEW_STORE_REPORTS');
     if (permissionCheck.error) return permissionCheck.error;
 
     const resolved = await resolveUserStore(auth.user);
