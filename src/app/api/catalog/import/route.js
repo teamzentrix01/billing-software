@@ -108,10 +108,10 @@ function normalizeProductImportRow(row = {}) {
     size: 'size',
   };
 
-  return Object.entries(row || {}).reduce((acc, [key, value]) => {
+  const normalized = Object.entries(row || {}).reduce((acc, [key, value]) => {
     const taxHeader = parseProductTaxHeader(key);
     if (taxHeader) {
-      acc[normalizeImportKey(key)] = value;
+      acc[normalizeImportKey(key)] = toBoolean(value, false);
       if (toBoolean(value, false)) acc.tax_name = taxHeader.label;
       return acc;
     }
@@ -120,6 +120,20 @@ function normalizeProductImportRow(row = {}) {
     acc[aliases[normalizedKey] || normalizedKey] = value;
     return acc;
   }, {});
+
+  const includeTax = toBoolean(normalized.include_tax, false);
+  normalized.include_tax = includeTax;
+
+  for (const taxColumn of PRODUCT_TAX_COLUMNS) {
+    const key = normalizeImportKey(taxColumn);
+    normalized[key] = toBoolean(normalized[key], false);
+  }
+
+  if (!includeTax) {
+    normalized.tax_name = '';
+  }
+
+  return normalized;
 }
 
 async function findExistingProductForImport(client, row) {
@@ -389,9 +403,10 @@ async function insertProductWithIntegrations(client, row, user) {
   const brandId = await ensureReferenceId(client, 'brands', row.brand_name, { manufacturerId });
   const departmentId = await ensureReferenceId(client, 'departments', row.department_name);
   const incomeHeadId = await resolveIdByName(client, 'income_heads', row.income_head_name);
-  const taxId = await resolveTaxIdForImport(client, row.tax_name);
   const inventoryStoreId = await resolveIdByName(client, 'stores', row.inventory_store_name);
   const includeTax = toBoolean(row.include_tax, false);
+  const taxName = includeTax ? row.tax_name : '';
+  const taxId = await resolveTaxIdForImport(client, taxName);
   const barcode = nullableText(row.barcode);
   if (barcode) {
     const duplicates = await client.query(
@@ -415,7 +430,7 @@ async function insertProductWithIntegrations(client, row, user) {
   if (normalizeText(row.manufacturer_name) && !manufacturerId) referenceErrors.push(`Manufacturer "${row.manufacturer_name}" not found`);
   if (normalizeText(row.department_name) && !departmentId) referenceErrors.push(`Department "${row.department_name}" not found`);
   if (normalizeText(row.income_head_name) && !incomeHeadId) referenceErrors.push(`Income Head "${row.income_head_name}" not found`);
-  if (normalizeText(row.tax_name) && !taxId) referenceErrors.push(`GST "${row.tax_name}" not found`);
+  if (includeTax && normalizeText(taxName) && !taxId) referenceErrors.push(`GST "${taxName}" not found`);
   if (includeTax && !taxId) referenceErrors.push('GST slab is required when include_tax is Yes');
   if (inventoryStoreId) {
     const storeCheck = requireStore(user, inventoryStoreId);
