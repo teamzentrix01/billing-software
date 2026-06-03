@@ -2,35 +2,7 @@ import { successResponse, errorResponse, validationError } from '@/lib/api-respo
 import { query } from '@/lib/db';
 import { ensureStoresSchema } from '@/lib/storesSchema';
 import { appendStoreScope, requireAuth, requirePermission } from '@/lib/api-protection';
-
-function buildStoreMeta(body = {}) {
-  return {
-    locationType: body.locationType || 'Store',
-    latitude: body.latitude || '',
-    longitude: body.longitude || '',
-    panNumber: body.panNumber || '',
-    defaultCustomerGroup: body.defaultCustomerGroup || '',
-    storeGuid: body.storeGuid || '',
-    shortCode: body.shortCode || '',
-    storeArea: body.storeArea || '',
-    enableVoucherValidation: !!body.enableVoucherValidation,
-    automaticPrint: !!body.automaticPrint,
-    enableStoreStockAlert: !!body.enableStoreStockAlert,
-    enableStoreOnlineBillingOnly: !!body.enableStoreOnlineBillingOnly,
-    cin: body.cin || '',
-    tin: body.tin || '',
-    serviceTaxNumber: body.serviceTaxNumber || '',
-    gstNumber: body.gstNumber || '',
-    customerGstOrderPrefix: body.customerGstOrderPrefix || '',
-    fssaiLicenseNumber: body.fssaiLicenseNumber || '',
-    taxInformation: body.taxInformation || '',
-    customStoreOrderPrefix: body.customStoreOrderPrefix || '',
-    refundCustomStoreOrderPrefix: body.refundCustomStoreOrderPrefix || '',
-    ncCustomStoreOrderPrefix: body.ncCustomStoreOrderPrefix || '',
-    ncRefundCustomStoreOrderPrefix: body.ncRefundCustomStoreOrderPrefix || '',
-    rwiCustomStoreOrderPrefix: body.rwiCustomStoreOrderPrefix || '',
-  };
-}
+import { buildStoreMeta, buildStoreCodeDuplicateQuery, normalizeStoreCode } from '@/lib/storeMeta';
 
 export async function GET(request) {
   try {
@@ -55,7 +27,10 @@ export async function GET(request) {
 
       if (searchParam) {
         params.push(`%${searchParam}%`);
-        where.push(`(s.name ILIKE $${params.length} OR CAST(s.id AS TEXT) = $${params.length})`);
+        where.push(`(
+          s.name ILIKE $${params.length}
+          OR COALESCE(s.meta->>'storeCode', s.meta->>'shortCode', '') ILIKE $${params.length}
+        )`);
       }
 
       const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -141,6 +116,16 @@ export async function POST(request) {
     }
     if (managerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(managerEmail)) {
       return validationError([{ field: 'managerEmail', message: 'Enter a valid e-mail address' }]);
+    }
+
+    const storeCode = normalizeStoreCode(body);
+    if (!storeCode) {
+      return validationError([{ field: 'storeCode', message: 'Store code is required' }]);
+    }
+    const duplicateQuery = buildStoreCodeDuplicateQuery(storeCode);
+    const duplicate = await query(duplicateQuery.sql, duplicateQuery.params);
+    if (duplicate.rows.length) {
+      return validationError([{ field: 'storeCode', message: 'Store code is already in use' }]);
     }
 
     const meta = buildStoreMeta(body);

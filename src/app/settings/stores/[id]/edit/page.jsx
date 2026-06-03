@@ -22,8 +22,7 @@ const initialForm = {
   openingTime: '10:00 am',
   closingTime: '10:00 pm',
   defaultCustomerGroup: 'None',
-  storeGuid: '',
-  shortCode: '',
+  storeCode: '',
   storeArea: '',
   enableVoucherValidation: false,
   automaticPrint: false,
@@ -88,8 +87,7 @@ export default function EditStorePage() {
           longitude: meta.longitude || '',
           panNumber: meta.panNumber || '',
           defaultCustomerGroup: meta.defaultCustomerGroup || 'None',
-          storeGuid: meta.storeGuid || '',
-          shortCode: meta.shortCode || '',
+          storeCode: meta.storeCode || meta.shortCode || '',
           storeArea: meta.storeArea || '',
           enableVoucherValidation: !!meta.enableVoucherValidation,
           automaticPrint: !!meta.automaticPrint,
@@ -140,6 +138,7 @@ export default function EditStorePage() {
       ['state', 'State is required'],
       ['pincode', 'Pincode is required'],
       ['country', 'Country is required'],
+      ['storeCode', 'Store code is required'],
     ];
     const missing = requiredFields.find(([key]) => !String(form[key] || '').trim());
     if (missing) {
@@ -227,7 +226,7 @@ export default function EditStorePage() {
             <Field label="E-mail Address"><input name="managerEmail" type="email" value={form.managerEmail} onChange={onChange} className="input" /></Field>
             <Field label="Opening Time"><input name="openingTime" value={form.openingTime} onChange={onChange} className="input" /></Field>
             <Field label="Closing Time"><input name="closingTime" value={form.closingTime} onChange={onChange} className="input" /></Field>
-            <Field label="Store GUID"><input name="storeGuid" value={form.storeGuid} onChange={onChange} className="input" /></Field>
+            <Field label="Store Code *"><input name="storeCode" value={form.storeCode} onChange={onChange} required className="input" /></Field>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2 mt-4">

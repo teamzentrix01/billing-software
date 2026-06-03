@@ -2,6 +2,7 @@ import { successResponse, errorResponse, notFoundError } from '@/lib/api-respons
 import { getClient, query } from '@/lib/db';
 import { ensureStoresSchema } from '@/lib/storesSchema';
 import { requireAuth, requirePermission, requireStore } from '@/lib/api-protection';
+import { buildStoreCodeDuplicateQuery, getStoreCode, mergeStoreMeta } from '@/lib/storeMeta';
 
 const STORE_DELETE_DEPENDENCIES = [
   { table: 'stock_in', column: 'destination_id', label: 'Stock In' },
@@ -40,35 +41,6 @@ async function deleteStoreDependencies(client, storeId) {
   }
 
   return deleted.filter((item) => item.count > 0);
-}
-
-function buildStoreMeta(body = {}) {
-  return {
-    locationType: body.locationType || 'Store',
-    latitude: body.latitude || '',
-    longitude: body.longitude || '',
-    panNumber: body.panNumber || '',
-    defaultCustomerGroup: body.defaultCustomerGroup || '',
-    storeGuid: body.storeGuid || '',
-    shortCode: body.shortCode || '',
-    storeArea: body.storeArea || '',
-    enableVoucherValidation: !!body.enableVoucherValidation,
-    automaticPrint: !!body.automaticPrint,
-    enableStoreStockAlert: !!body.enableStoreStockAlert,
-    enableStoreOnlineBillingOnly: !!body.enableStoreOnlineBillingOnly,
-    cin: body.cin || '',
-    tin: body.tin || '',
-    serviceTaxNumber: body.serviceTaxNumber || '',
-    gstNumber: body.gstNumber || '',
-    customerGstOrderPrefix: body.customerGstOrderPrefix || '',
-    fssaiLicenseNumber: body.fssaiLicenseNumber || '',
-    taxInformation: body.taxInformation || '',
-    customStoreOrderPrefix: body.customStoreOrderPrefix || '',
-    refundCustomStoreOrderPrefix: body.refundCustomStoreOrderPrefix || '',
-    ncCustomStoreOrderPrefix: body.ncCustomStoreOrderPrefix || '',
-    ncRefundCustomStoreOrderPrefix: body.ncRefundCustomStoreOrderPrefix || '',
-    rwiCustomStoreOrderPrefix: body.rwiCustomStoreOrderPrefix || '',
-  };
 }
 
 export async function GET(request, { params }) {
@@ -147,7 +119,21 @@ export async function PUT(request, { params }) {
       return errorResponse('Enter a valid e-mail address', 422);
     }
 
-    const meta = buildStoreMeta(body);
+    const existing = await query('SELECT meta FROM stores WHERE id = $1 LIMIT 1', [storeId]);
+    if (!existing.rows.length) {
+      return notFoundError('Store not found');
+    }
+
+    const meta = mergeStoreMeta(existing.rows[0].meta, body);
+    const storeCode = getStoreCode(meta);
+    if (!storeCode) {
+      return errorResponse('Store code is required', 422);
+    }
+    const duplicateQuery = buildStoreCodeDuplicateQuery(storeCode, storeId);
+    const duplicate = await query(duplicateQuery.sql, duplicateQuery.params);
+    if (duplicate.rows.length) {
+      return errorResponse('Store code is already in use', 422);
+    }
 
     const update = await query(
       `UPDATE stores
