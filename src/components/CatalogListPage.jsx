@@ -34,10 +34,11 @@ const PRODUCT_TAX_COLUMNS = [
   '15-IGST-40%',
 ];
 const PRODUCT_ATTRIBUTE_COLUMNS = [
-  'Use attribute - M.R.P. 85',
+  'Use Attribute MRP',
   'Use attribute - Cost Price',
   'Use attribute - Expiry Date',
 ];
+const REQUIRED_PRODUCT_TEMPLATE_HEADERS = new Set(['Product Name', 'Selling Price', 'Unit']);
 
 async function fetchOptionNames(url, labelFields = ['name']) {
   try {
@@ -221,7 +222,7 @@ export default function CatalogListPage({
       'Allow Variable Pricing',
       'Allow Discount On POS',
       'HSN/SAC Code',
-      'Default Price',
+      'Selling Price',
       'MRP',
       'Cost Price',
       'Barcode',
@@ -235,8 +236,6 @@ export default function CatalogListPage({
       'Disable Billing On Zero',
       'Disable Sales On Expiry',
       'Inventory Method',
-      'Manufacturer',
-      'Department',
     ];
     const baseHeaders = bulkImportType === 'categories'
       ? ['name', 'description', 'sort_sequence', 'is_active']
@@ -246,8 +245,15 @@ export default function CatalogListPage({
         ? ['name', 'description', 'category_name', 'is_active']
         : productTemplateHeaders;
 
-    const headers = [...baseHeaders];
-    const requiredHeaders = new Set(bulkImportType === 'products' ? ['Product Name', 'Default Price', 'Unit'] : ['name']);
+    const displayHeader = (header) =>
+      bulkImportType === 'products' && REQUIRED_PRODUCT_TEMPLATE_HEADERS.has(header)
+        ? `✓ ${header}`
+        : header;
+    const cleanHeader = (header) => String(header || '').replace(/^✓\s*/, '').trim();
+    const headers = baseHeaders.map(displayHeader);
+    const requiredHeaders = new Set(bulkImportType === 'products'
+      ? [...REQUIRED_PRODUCT_TEMPLATE_HEADERS].map(displayHeader)
+      : ['name']);
     const templateRecords = await fetchTemplateRecords();
     const productValueMap = {
       'Product Name': 'name',
@@ -264,7 +270,7 @@ export default function CatalogListPage({
       'Allow Variable Pricing': 'allow_variable_pricing',
       'Allow Discount On POS': 'allow_discount_on_pos',
       'HSN/SAC Code': 'hsn_code',
-      'Default Price': 'selling_price',
+      'Selling Price': 'selling_price',
       MRP: 'mrp',
       'Cost Price': 'cost_price',
       Barcode: 'barcode',
@@ -276,10 +282,11 @@ export default function CatalogListPage({
       'Disable Billing On Zero': 'disable_billing_on_zero',
       'Disable Sales On Expiry': 'disable_sales_on_expiry',
       'Inventory Method': 'inventory_method',
-      Manufacturer: 'manufacturer_name',
-      Department: 'department_name',
     };
-    const dataRows = templateRecords.map((record) => headers.map((header) => getTemplateCellValue(record, productValueMap[header] || header)));
+    const dataRows = templateRecords.map((record) => headers.map((header) => {
+      const normalizedHeader = cleanHeader(header);
+      return getTemplateCellValue(record, productValueMap[normalizedHeader] || normalizedHeader);
+    }));
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
     headers.forEach((header, index) => {
@@ -295,13 +302,12 @@ export default function CatalogListPage({
       { key: 'sub_categories', values: await fetchOptionNames('/api/catalog/sub-categories?pageSize=1000') },
       { key: 'income_heads', values: await fetchOptionNames('/api/catalog/income-heads?pageSize=1000') },
       { key: 'stores', values: await fetchStoresForTemplate() },
-      { key: 'manufacturers', values: await fetchOptionNames('/api/catalog/manufacturers?pageSize=1000') },
-      { key: 'departments', values: await fetchOptionNames('/api/catalog/departments?pageSize=1000') },
     ] : [];
-    const includeTaxCol = headers.indexOf('Price Includes Tax');
-    const unitCol = headers.indexOf('Unit');
-    const inventoryMethodCol = headers.indexOf('Inventory Method');
-    const stockTypeCol = headers.indexOf('Stock Item Type');
+    const headerIndex = (label) => headers.findIndex((header) => cleanHeader(header) === label);
+    const includeTaxCol = headerIndex('Price Includes Tax');
+    const unitCol = headerIndex('Unit');
+    const inventoryMethodCol = headerIndex('Inventory Method');
+    const stockTypeCol = headerIndex('Stock Item Type');
     const booleanCols = [
       'Price Includes Tax',
       'Manage Inventory',
@@ -312,7 +318,7 @@ export default function CatalogListPage({
       'Disable Sales On Expiry',
       ...PRODUCT_TAX_COLUMNS,
       ...PRODUCT_ATTRIBUTE_COLUMNS,
-    ].map((header) => headers.indexOf(header)).filter((index) => index >= 0);
+    ].map((header) => headerIndex(header)).filter((index) => index >= 0);
     const validations = [];
     const addValidation = (col, formula) => {
       if (col < 0 || !formula) return;
@@ -328,7 +334,7 @@ export default function CatalogListPage({
     addValidation(stockTypeCol, '"batched,unbatched"');
     if (bulkImportType === 'products') {
       const addPrefixValidation = (header, optionKey) => {
-        const col = headers.indexOf(header);
+        const col = headerIndex(header);
         if (col < 0) return;
         addValidation(col, prefixMatchOptionFormula(optionGroups, optionKey, `${XLSX.utils.encode_col(col)}2`));
       };
@@ -337,8 +343,6 @@ export default function CatalogListPage({
       addPrefixValidation('Sub Category', 'sub_categories');
       addPrefixValidation('Income Head', 'income_heads');
       addPrefixValidation('Opening Stock Store', 'stores');
-      addPrefixValidation('Manufacturer', 'manufacturers');
-      addPrefixValidation('Department', 'departments');
     }
     XLSX.utils.book_append_sheet(wb, ws, 'Template');
     if (bulkImportType === 'products' && optionGroups.some((group) => group.values.length)) {
@@ -349,9 +353,9 @@ export default function CatalogListPage({
     if (bulkImportType === 'products') {
       const info = XLSX.utils.aoa_to_sheet([
         ['Field', 'Requirement / allowed values'],
-        ['name', 'Required'],
-        ['selling_price', 'Required'],
-        ['unit', 'Required: PCS, KG, or LTR'],
+        ['Product Name', 'Required'],
+        ['Selling Price', 'Required'],
+        ['Unit', 'Required: PCS, KG, or LTR'],
         ['include_tax', 'Yes/No. Use Yes when GST is already included in selling_price.'],
         ['GST', optionFormula(optionGroups, 'taxes') ? 'Choose from dropdown. Required when Price Includes Tax is Yes.' : 'Required when Price Includes Tax is Yes. Must match an existing GST slab name.'],
         ['stock_item_type', 'batched/unbatched'],

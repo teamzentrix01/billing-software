@@ -1,6 +1,7 @@
 import { query, getClient } from '@/lib/db';
 import { successResponse, errorResponse, validationError, notFoundError } from '@/lib/api-response';
 import { ensureSalesBillingSchema } from '@/lib/salesBillingSchema';
+import { ensureStoreCashSchema } from '@/lib/storeCashSchema';
 import { extractAuthUser, requireStore } from '@/lib/api-protection';
 
 const SESSION_CLOSE_CUTOFF_HOUR = 21;
@@ -37,11 +38,13 @@ function canManageSessions(user) {
 function mapClosingTotals(row = {}) {
   const openingCash = toNumber(row.opening_cash);
   const cashSales = toNumber(row.cash_sales);
-  const expectedCash = Number((openingCash + cashSales).toFixed(2));
+  const cashWithdrawals = toNumber(row.cash_withdrawals);
+  const expectedCash = Number((openingCash + cashSales - cashWithdrawals).toFixed(2));
 
   return {
     openingCash,
     cashSales,
+    cashWithdrawals,
     cardSales: toNumber(row.card_sales),
     upiSales: toNumber(row.upi_sales),
     splitSales: toNumber(row.split_sales),
@@ -56,7 +59,13 @@ function mapClosingTotals(row = {}) {
 }
 
 const SESSION_TOTALS_SQL = `
-  WITH bill_totals AS (
+  WITH session_scope AS (
+    SELECT session_id, store_id, session_start_at
+    FROM user_counter_sessions
+    WHERE session_id = $1
+    LIMIT 1
+  ),
+  bill_totals AS (
     SELECT
       COALESCE(SUM(sb.grand_total), 0) AS gross_sales,
       COALESCE(SUM(sb.discount_total), 0) AS discount_total,
@@ -76,10 +85,21 @@ const SESSION_TOTALS_SQL = `
     FROM sales_bills sb
     LEFT JOIN sales_bill_payments sbp ON sbp.sales_bill_id = sb.id
     WHERE sb.session_id = $1
+  ),
+  withdrawal_totals AS (
+    SELECT
+      COALESCE(SUM(sct.amount), 0) AS cash_withdrawals
+    FROM session_scope ss
+    LEFT JOIN store_cash_transactions sct
+      ON sct.store_id = ss.store_id
+     AND sct.transaction_type = 'withdrawal'
+     AND sct.created_at >= ss.session_start_at
+     AND sct.meta->>'sessionId' = ss.session_id
   )
   SELECT
     COALESCE(($2::jsonb->>'opening_cash')::numeric, 0) AS opening_cash,
     payment_totals.cash_sales,
+    withdrawal_totals.cash_withdrawals,
     payment_totals.card_sales,
     payment_totals.upi_sales,
     payment_totals.split_sales,
@@ -89,12 +109,13 @@ const SESSION_TOTALS_SQL = `
     bill_totals.due_total,
     payment_totals.paid_total,
     bill_totals.bill_count
-  FROM bill_totals, payment_totals
+  FROM bill_totals, payment_totals, withdrawal_totals
 `;
 
 export async function GET(request) {
   try {
     await ensureSalesBillingSchema();
+    await ensureStoreCashSchema();
     const auth = await extractAuthUser(request);
     if (auth.error || !auth.user) return errorResponse(auth.error || 'Unauthorized', 401);
 
@@ -180,13 +201,14 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     await ensureSalesBillingSchema();
+    await ensureStoreCashSchema();
     const auth = await extractAuthUser(request);
     if (auth.error || !auth.user) return errorResponse(auth.error || 'Unauthorized', 401);
 
     const body = await request.json();
     const sessionId = String(body.sessionId || body.session_id || '').trim();
-    const requestedOpeningCash = body.openingCash ?? body.opening_cash;
     const remarks = String(body.remarks || '').trim();
+    const denominations = body.denominations && typeof body.denominations === 'object' ? body.denominations : {};
 
     if (!sessionId) {
       return validationError({ sessionId: 'Session id is required' });
@@ -230,9 +252,7 @@ export async function POST(request) {
         return errorResponse('You can only close your own POS session', 403);
       }
 
-      const openingCash = requestedOpeningCash == null
-        ? toNumber(session.meta?.opening_cash)
-        : toNumber(requestedOpeningCash);
+      const openingCash = toNumber(session.meta?.opening_cash);
       const totalsResult = await client.query(SESSION_TOTALS_SQL, [
         sessionId,
         JSON.stringify({ ...(session.meta || {}), opening_cash: openingCash }),
@@ -240,20 +260,33 @@ export async function POST(request) {
 
       const totals = mapClosingTotals(totalsResult.rows[0]);
       const cashSales = totals.cashSales;
-      const expectedCash = Number((openingCash + cashSales).toFixed(2));
-      const actualCash = expectedCash;
+      const cashWithdrawals = totals.cashWithdrawals;
+      const expectedCash = Number((openingCash + cashSales - cashWithdrawals).toFixed(2));
+      const actualCash = Math.max(0, toNumber(body.actualCash ?? body.actual_cash, expectedCash));
+      const handoverAmount = Math.max(0, toNumber(body.handoverAmount ?? body.handover_amount, actualCash));
       const variance = Number((actualCash - expectedCash).toFixed(2));
+      const handoverStatus = Math.abs(variance) > 0.01 ? 'variance_flagged' : 'pending_handover';
       const paymentBreakup = {
         ...totals,
         openingCash,
+        cashWithdrawals,
         expectedCash,
+        countedCash: actualCash,
+        handoverAmount,
       };
 
       const closingInsert = await client.query(
         `INSERT INTO cashier_closings (
           session_id, user_id, store_id, opening_cash, expected_cash,
-          actual_cash, variance, payment_breakup, remarks, meta, closed_at, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::jsonb, NOW(), NOW())
+          actual_cash, counted_cash, handover_amount, manager_received_amount,
+          variance, handover_status, handed_over_by, handed_over_at, denominations,
+          payment_breakup, remarks, meta, closed_at, created_at
+        ) VALUES (
+          $1, $2, $3, $4, $5,
+          $6, $7, $8, 0,
+          $9, $10, $11, NOW(), $12::jsonb,
+          $13::jsonb, $14, $15::jsonb, NOW(), NOW()
+        )
         RETURNING *`,
         [
           sessionId,
@@ -262,10 +295,15 @@ export async function POST(request) {
           openingCash,
           expectedCash,
           actualCash,
+          actualCash,
+          handoverAmount,
           variance,
+          handoverStatus,
+          auth.user.id,
+          JSON.stringify(denominations),
           JSON.stringify(paymentBreakup),
           remarks || null,
-          JSON.stringify(body),
+          JSON.stringify({ ...body, flow: 'pending_manager_verification' }),
         ]
       );
 
@@ -288,12 +326,15 @@ export async function POST(request) {
           openingCash,
           expectedCash,
           actualCash,
+          countedCash: actualCash,
+          handoverAmount,
+          handoverStatus,
           variance,
           paymentBreakup,
           totals: paymentBreakup,
           remarks,
         },
-      }, 'Cashier session closed successfully', 201);
+      }, 'Cashier session closed. Cash is pending manager verification.', 201);
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;

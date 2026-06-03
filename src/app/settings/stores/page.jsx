@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import MainLayout from '@/components/MainLayout';
 import CatalogListPage from '@/components/CatalogListPage';
+import { getStoreCode } from '@/lib/storeMeta';
 
 export default function Page() {
   const router = useRouter();
@@ -47,8 +48,7 @@ export default function Page() {
               {store.name}
             </button>
           ),
-          store_id: store.id,
-          store_guid: store.meta?.storeGuid || '—',
+          store_code: getStoreCode(store.meta) || '—',
           active_license: store.meta?.gstNumber || '—',
           live_since: store.created_at
             ? new Date(store.created_at).toLocaleDateString('en-IN', {
@@ -99,8 +99,7 @@ export default function Page() {
   const columns = useMemo(() => ([
     { key: 'sno', label: 'S. No.', sortable: true },
     { key: 'name', label: 'Store Name', sortable: true },
-    { key: 'store_id', label: 'Store ID', sortable: true },
-    { key: 'store_guid', label: 'Store GUID', sortable: true },
+    { key: 'store_code', label: 'Store Code', sortable: true },
     { key: 'active_license', label: 'Active License', sortable: true },
     { key: 'live_since', label: 'Live Since', sortable: true },
     { key: 'address_text', label: 'Address', sortable: true },

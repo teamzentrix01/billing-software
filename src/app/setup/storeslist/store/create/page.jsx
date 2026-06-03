@@ -22,8 +22,7 @@ const initialForm = {
   openingTime: '10:00 am',
   closingTime: '10:00 pm',
   defaultCustomerGroup: 'None',
-  storeGuid: '',
-  shortCode: '',
+  storeCode: '',
   storeArea: '',
   enableVoucherValidation: false,
   automaticPrint: false,
@@ -74,6 +73,7 @@ export default function CreateStorePage() {
     if (!form.pincode.trim()) next.pincode = 'Pincode is required';
     else if (!/^\d{6}$/.test(form.pincode.trim())) next.pincode = 'Pincode must be 6 digits';
     if (!form.country.trim()) next.country = 'Country is required';
+    if (!form.storeCode.trim()) next.storeCode = 'Store code is required';
     if (form.managerMobile && !/^\d{10}$/.test(form.managerMobile)) {
       next.managerMobile = 'Mobile number must be exactly 10 digits';
     }
@@ -137,7 +137,7 @@ export default function CreateStorePage() {
                 <p className="text-sm text-gray-500 mt-1">The store has been created and its details are shown below.</p>
               </div>
               <div className="text-right text-xs text-gray-500">
-                <div>ID: {savedStore.id}</div>
+                <div>Store Code: {savedStore.meta?.storeCode || savedStore.meta?.shortCode || form.storeCode || '—'}</div>
                 <div>Status: {savedStore.is_active ? 'Active' : 'Inactive'}</div>
               </div>
             </div>
@@ -169,8 +169,7 @@ export default function CreateStorePage() {
               ['Opening Time', savedStore.opening_time || form.openingTime],
               ['Closing Time', savedStore.closing_time || form.closingTime],
               ['Default Customer Group', savedStore.meta?.defaultCustomerGroup || form.defaultCustomerGroup],
-              ['Store GUID', savedStore.meta?.storeGuid || form.storeGuid],
-              ['Short Code', savedStore.meta?.shortCode || form.shortCode],
+              ['Store Code', savedStore.meta?.storeCode || savedStore.meta?.shortCode || form.storeCode],
               ['Store Area', savedStore.meta?.storeArea || form.storeArea],
               ['Voucher Validation', (savedStore.meta?.enableVoucherValidation ?? form.enableVoucherValidation) ? 'Yes' : 'No'],
               ['Automatic Print', (savedStore.meta?.automaticPrint ?? form.automaticPrint) ? 'Yes' : 'No'],
@@ -300,14 +299,9 @@ export default function CreateStorePage() {
               <input name="defaultCustomerGroup" value={form.defaultCustomerGroup} onChange={onChange} className="input" placeholder="None" />
             </Field>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field label="Store GUID">
-                <input name="storeGuid" value={form.storeGuid} onChange={onChange} className="input" />
-              </Field>
-              <Field label="Short Code">
-                <input name="shortCode" value={form.shortCode} onChange={onChange} className="input" />
-              </Field>
-            </div>
+            <Field label="Store Code *" error={errors.storeCode}>
+              <input name="storeCode" value={form.storeCode} onChange={onChange} className={inputClass('storeCode')} placeholder="e.g. Noida-01" />
+            </Field>
 
             <Field label="Store Area">
               <input name="storeArea" value={form.storeArea} onChange={onChange} className="input" placeholder="Area in sq m" />

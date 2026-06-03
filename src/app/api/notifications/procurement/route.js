@@ -5,6 +5,7 @@ import { ensureProcurementSchema } from '@/lib/procurementSchema';
 import { ensurePurchaseOrderSchema } from '@/lib/purchaseOrderSchema';
 import { ensureStockInSchema } from '@/lib/stockInSchema';
 import { ensureVendorInvoicesSchema } from '@/lib/vendorInvoicesSchema';
+import { ensureMarginApprovalSchema } from '@/lib/marginApprovalSchema';
 
 function mapAlert(row) {
   const rawStatus = String(row.status || '').trim().toLowerCase();
@@ -46,6 +47,7 @@ export async function GET(request) {
       ensurePurchaseOrderSchema(),
       ensureStockInSchema(),
       ensureVendorInvoicesSchema(),
+      ensureMarginApprovalSchema(),
     ]);
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
@@ -57,6 +59,7 @@ export async function GET(request) {
     const poWhere = [`LOWER(COALESCE(po.status, 'draft')) = 'draft'`];
     const grnWhere = [`LOWER(COALESCE(si.status, 'draft')) = 'draft'`, `COALESCE(si.reference_type, '') = 'purchase_order'`];
     const invoiceWhere = [`LOWER(COALESCE(vi.status, 'pending')) IN ('pending', 'partial')`];
+    const marginWhere = [`LOWER(COALESCE(mar.status, 'pending')) = 'pending'`];
     const params = [];
 
     const qScope = appendStoreScope(quotationWhere, params, 'vq.store_id', auth.user);
@@ -69,6 +72,8 @@ export async function GET(request) {
     if (grnScope.error) return grnScope.error;
     const invoiceScope = appendStoreScope(invoiceWhere, params, 'COALESCE(po_i.destination_id, si_i.destination_id)', auth.user);
     if (invoiceScope.error) return invoiceScope.error;
+    const marginScope = appendStoreScope(marginWhere, params, 'mar.store_id', auth.user);
+    if (marginScope.error) return marginScope.error;
 
     const res = await query(
       `SELECT * FROM (
@@ -119,6 +124,15 @@ export async function GET(request) {
          LEFT JOIN stores s ON s.id = COALESCE(po_i.destination_id, si_i.destination_id)
          LEFT JOIN vendors v ON v.id = vi.vendor_id
          WHERE ${invoiceWhere.join(' AND ')}
+
+         UNION ALL
+         SELECT 'margin_approval' AS kind, mar.id, mar.source_reference AS transaction_id, 'Margin approval pending' AS title,
+                mar.store_id, s.name AS store_name, p.name AS vendor_name,
+                0::numeric AS amount, mar.status, mar.created_at, '/purchase/margin-approvals' AS href
+         FROM margin_approval_requests mar
+         LEFT JOIN stores s ON s.id = mar.store_id
+         LEFT JOIN products p ON p.id = mar.product_id
+         WHERE ${marginWhere.join(' AND ')}
        ) alerts
        ORDER BY created_at DESC
        LIMIT 25`,

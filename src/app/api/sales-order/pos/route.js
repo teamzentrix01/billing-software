@@ -2,6 +2,7 @@ import { getClient, query } from '@/lib/db';
 import { successResponse, errorResponse } from '@/lib/api-response';
 import { verifyToken } from '@/lib/auth-enhanced';
 import { ensureSalesBillingSchema } from '@/lib/salesBillingSchema';
+import { ensureStoreCashSchema, getStoreCashBalanceSnapshot } from '@/lib/storeCashSchema';
 import { extractAuthUser, requirePermission, requireStore } from '@/lib/api-protection';
 import { ensureCatalogExtrasSchema } from '@/lib/catalogExtrasSchema';
 import { validatePhoneNumber } from '@/lib/phoneValidator';
@@ -168,6 +169,7 @@ export async function POST(req) {
   let client;
   try {
     await ensureSalesBillingSchema();
+    await ensureStoreCashSchema();
     await ensureCatalogExtrasSchema();
     await ensureProductDiscountSchema();
     await ensureInventoryBatchSchema();
@@ -583,6 +585,7 @@ export async function POST(req) {
 export async function GET(req) {
   try {
     await ensureSalesBillingSchema();
+    await ensureStoreCashSchema();
     await ensureCatalogExtrasSchema();
     await ensureProductDiscountSchema();
     await ensureInventoryBatchSchema();
@@ -759,6 +762,7 @@ export async function GET(req) {
     `;
     const billsRes = await query(billsSql, billParams);
     const paymentModes = await loadPaymentModes(effectiveStoreId);
+    const storeCash = await getStoreCashBalanceSnapshot(effectiveStoreId);
 
     return successResponse({
       products: productsRes.rows,
@@ -767,6 +771,7 @@ export async function GET(req) {
       session,
       stores: storesRes.rows,
       selectedStoreId: effectiveStoreId,
+      storeCash,
       pagination: { page, pageSize, total: productsRes.rowCount },
     });
   } catch (err) {
