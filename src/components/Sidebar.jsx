@@ -101,9 +101,9 @@ export default function Sidebar({
           )}
         </div>
 
-        <span className={`pointer-events-none absolute left-[66px] top-1/2 z-[200] hidden w-[290px] -translate-y-1/2 rounded-3xl border border-red-300/35 bg-gradient-to-br from-red-700 via-red-700 to-green-700 px-4 py-3.5 text-left shadow-[0_20px_45px_rgba(176,0,0,0.32)] backdrop-blur-sm transition-all duration-300 ease-out md:block ${isHovered ? 'visible translate-x-2 scale-100 opacity-100' : 'invisible translate-x-0 scale-95 opacity-0'}`}>
-          <span className="block text-[16px] font-extrabold tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.25)]">{item.label}</span>
-          <span className="mt-2 block whitespace-normal text-[13px] font-medium leading-snug text-red-100">
+        <span className={`pointer-events-none absolute left-[66px] top-1/2 z-[200] hidden w-[290px] -translate-y-1/2 rounded-2xl border border-slate-200 bg-white px-4 py-3.5 text-left shadow-none transition-all duration-200 ease-out md:block ${isHovered ? 'visible translate-x-2 scale-100 opacity-100' : 'invisible translate-x-0 scale-95 opacity-0'}`}>
+          <span className="block text-[16px] font-extrabold tracking-wide text-slate-900">{item.label}</span>
+          <span className="mt-2 block whitespace-normal text-[13px] font-medium leading-snug text-slate-600">
             {item.description || descriptions[item.label] || `Open ${item.label}`}
           </span>
         </span>
