@@ -1,8 +1,21 @@
-import { successResponse, errorResponse, validationError } from '@/lib/api-response';
-import { query } from '@/lib/db';
-import { ensureStoresSchema } from '@/lib/storesSchema';
-import { appendStoreScope, requireAuth, requirePermission } from '@/lib/api-protection';
-import { buildStoreMeta, buildStoreCodeDuplicateQuery, normalizeStoreCode } from '@/lib/storeMeta';
+import {
+  successResponse,
+  errorResponse,
+  validationError,
+} from "@/lib/api-response";
+import { query } from "@/lib/db";
+import { ensureStoresSchema } from "@/lib/storesSchema";
+import {
+  appendStoreScope,
+  requireAuth,
+  requirePermission,
+} from "@/lib/api-protection";
+import {
+  buildStoreMeta,
+  buildStoreCodeDuplicateQuery,
+  normalizeStoreCode,
+  validateStoreCommercialPayload,
+} from "@/lib/storeMeta";
 
 export async function GET(request) {
   try {
@@ -11,9 +24,9 @@ export async function GET(request) {
     if (auth.error) return auth.error;
 
     const url = new URL(request.url);
-    const pageParam = url.searchParams.get('page');
-    const pageSizeParam = url.searchParams.get('pageSize');
-    const searchParam = (url.searchParams.get('search') || '').trim();
+    const pageParam = url.searchParams.get("page");
+    const pageSizeParam = url.searchParams.get("pageSize");
+    const searchParam = (url.searchParams.get("search") || "").trim();
 
     // If pagination/search params present, return paginated shape expected by stores list page
     if (pageParam || pageSizeParam || searchParam) {
@@ -22,7 +35,7 @@ export async function GET(request) {
 
       const where = [];
       const params = [];
-      const scope = appendStoreScope(where, params, 's.id', auth.user);
+      const scope = appendStoreScope(where, params, "s.id", auth.user);
       if (scope.error) return scope.error;
 
       if (searchParam) {
@@ -33,9 +46,12 @@ export async function GET(request) {
         )`);
       }
 
-      const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+      const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-      const totalRes = await query(`SELECT COUNT(*)::INT AS total FROM stores s ${whereSql}`, params);
+      const totalRes = await query(
+        `SELECT COUNT(*)::INT AS total FROM stores s ${whereSql}`,
+        params,
+      );
       const total = Number(totalRes.rows[0]?.total || 0);
 
       const offset = (page - 1) * pageSize;
@@ -50,18 +66,28 @@ export async function GET(request) {
          ${whereSql}
          ORDER BY s.name ASC
          LIMIT $${qParams.length - 1} OFFSET $${qParams.length}`,
-        qParams
+        qParams,
       );
 
       const totalPages = Math.max(1, Math.ceil(total / pageSize));
-      return successResponse({ stores: res.rows, records: res.rows, page, pageSize, total, totalPages }, 'Stores fetched');
+      return successResponse(
+        {
+          stores: res.rows,
+          records: res.rows,
+          page,
+          pageSize,
+          total,
+          totalPages,
+        },
+        "Stores fetched",
+      );
     }
 
     const where = [];
     const params = [];
-    const scope = appendStoreScope(where, params, 'id', auth.user);
+    const scope = appendStoreScope(where, params, "id", auth.user);
     if (scope.error) return scope.error;
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
     // Fallback: return accessible stores as an array for legacy callers
     const res = await query(
@@ -70,12 +96,15 @@ export async function GET(request) {
        FROM stores
        ${whereSql}
        ORDER BY name`,
-      params
+      params,
     );
-    return successResponse({ stores: res.rows, records: res.rows }, 'Stores fetched');
+    return successResponse(
+      { stores: res.rows, records: res.rows },
+      "Stores fetched",
+    );
   } catch (err) {
     console.error(err);
-    return errorResponse('Failed to fetch stores');
+    return errorResponse("Failed to fetch stores");
   }
 }
 
@@ -85,47 +114,78 @@ export async function POST(request) {
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
 
-    const permissionCheck = requirePermission(auth.user, 'MANAGE_STORES');
+    const permissionCheck = requirePermission(auth.user, "MANAGE_STORES");
     if (permissionCheck.error) return permissionCheck.error;
 
     const body = await request.json().catch(() => ({}));
-    const name = String(body.name || '').trim();
-    const locationType = String(body.locationType || '').trim();
-    const addressLine1 = String(body.addressLine1 || '').trim();
-    const addressLine2 = String(body.addressLine2 || '').trim();
-    const city = String(body.city || '').trim();
-    const state = String(body.state || '').trim();
-    const pincode = String(body.pincode || '').trim();
-    const country = String(body.country || '').trim() || 'India';
+    const name = String(body.name || "").trim();
+    const locationType = String(body.locationType || "").trim();
+    const addressLine1 = String(body.addressLine1 || "").trim();
+    const addressLine2 = String(body.addressLine2 || "").trim();
+    const city = String(body.city || "").trim();
+    const state = String(body.state || "").trim();
+    const pincode = String(body.pincode || "").trim();
+    const country = String(body.country || "").trim() || "India";
     const requiredErrors = [];
-    if (!name) requiredErrors.push({ field: 'name', message: 'Store name is required' });
-    if (!locationType) requiredErrors.push({ field: 'locationType', message: 'Location type is required' });
-    if (!addressLine1) requiredErrors.push({ field: 'addressLine1', message: 'Address line 1 is required' });
-    if (!city) requiredErrors.push({ field: 'city', message: 'City is required' });
-    if (!state) requiredErrors.push({ field: 'state', message: 'State is required' });
-    if (!pincode) requiredErrors.push({ field: 'pincode', message: 'Pincode is required' });
-    else if (!/^\d{6}$/.test(pincode)) requiredErrors.push({ field: 'pincode', message: 'Pincode must be 6 digits' });
-    if (!country) requiredErrors.push({ field: 'country', message: 'Country is required' });
+    if (!name)
+      requiredErrors.push({ field: "name", message: "Store name is required" });
+    if (!locationType)
+      requiredErrors.push({
+        field: "locationType",
+        message: "Location type is required",
+      });
+    if (!addressLine1)
+      requiredErrors.push({
+        field: "addressLine1",
+        message: "Address line 1 is required",
+      });
+    if (!city)
+      requiredErrors.push({ field: "city", message: "City is required" });
+    if (!state)
+      requiredErrors.push({ field: "state", message: "State is required" });
+    if (!pincode)
+      requiredErrors.push({ field: "pincode", message: "Pincode is required" });
+    else if (!/^\d{6}$/.test(pincode))
+      requiredErrors.push({
+        field: "pincode",
+        message: "Pincode must be 6 digits",
+      });
+    if (!country)
+      requiredErrors.push({ field: "country", message: "Country is required" });
+    requiredErrors.push(...validateStoreCommercialPayload(body));
     if (requiredErrors.length) {
       return validationError(requiredErrors);
     }
-    const managerMobile = String(body.managerMobile || '').replace(/\D/g, '');
-    const managerEmail = String(body.managerEmail || '').trim().toLowerCase();
+    const managerMobile = String(body.managerMobile || "").replace(/\D/g, "");
+    const managerEmail = String(body.managerEmail || "")
+      .trim()
+      .toLowerCase();
     if (managerMobile && !/^\d{10}$/.test(managerMobile)) {
-      return validationError([{ field: 'managerMobile', message: 'Mobile number must be exactly 10 digits' }]);
+      return validationError([
+        {
+          field: "managerMobile",
+          message: "Mobile number must be exactly 10 digits",
+        },
+      ]);
     }
     if (managerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(managerEmail)) {
-      return validationError([{ field: 'managerEmail', message: 'Enter a valid e-mail address' }]);
+      return validationError([
+        { field: "managerEmail", message: "Enter a valid e-mail address" },
+      ]);
     }
 
     const storeCode = normalizeStoreCode(body);
     if (!storeCode) {
-      return validationError([{ field: 'storeCode', message: 'Store code is required' }]);
+      return validationError([
+        { field: "storeCode", message: "Store code is required" },
+      ]);
     }
     const duplicateQuery = buildStoreCodeDuplicateQuery(storeCode);
     const duplicate = await query(duplicateQuery.sql, duplicateQuery.params);
     if (duplicate.rows.length) {
-      return validationError([{ field: 'storeCode', message: 'Store code is already in use' }]);
+      return validationError([
+        { field: "storeCode", message: "Store code is already in use" },
+      ]);
     }
 
     const meta = buildStoreMeta(body);
@@ -151,16 +211,16 @@ export async function POST(request) {
         body.openingTime || null,
         body.closingTime || null,
         JSON.stringify(meta),
-      ]
+      ],
     );
 
     if (!insert.rows.length) {
-      return errorResponse('Failed to create store');
+      return errorResponse("Failed to create store");
     }
 
-    return successResponse({ store: insert.rows[0] }, 'Store created', 201);
+    return successResponse({ store: insert.rows[0] }, "Store created", 201);
   } catch (err) {
-    console.error('[stores POST]', err);
-    return errorResponse('Failed to create store');
+    console.error("[stores POST]", err);
+    return errorResponse("Failed to create store");
   }
 }

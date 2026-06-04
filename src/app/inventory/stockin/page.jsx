@@ -13,7 +13,6 @@ import {
   OPTIONS_SHEET_NAME,
   addOptionNamedRanges,
   applyTextFormatToColumns,
-  buildOptionsSheet,
   excelText,
   hideOptionsSheet,
   optionFormula,
@@ -155,6 +154,35 @@ const STOCK_IN_TEXT_TEMPLATE_HEADERS = [
   "Serial Number (serialNumber)",
   "serialNumber",
 ];
+const STOCK_IN_LOOKUP_HEADERS = [
+  "Product ID",
+  "SKU",
+  "Product Name",
+  "Size ID",
+  "Size Name",
+  "Category",
+  "Brand",
+  "Barcode",
+  "Unit",
+  "Stock Items Type",
+  "Cost/Unit",
+  "MRP",
+  "Selling Price",
+];
+
+const STOCK_IN_VLOOKUP_COLUMNS = {
+  "Product Name": 3,
+  "Size ID": 4,
+  "Size Name": 5,
+  Category: 6,
+  Brand: 7,
+  Barcode: 8,
+  Unit: 9,
+  "Stock Items Type": 10,
+  "Cost/Unit": 11,
+  MRP: 12,
+  "Selling Price": 13,
+};
 
 function formatFileSize(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -176,6 +204,152 @@ function normalizeImportDate(value) {
 
 function stockTemplateValue(row, keys, fallback = "") {
   return getBulkField(row, keys, fallback);
+}
+
+function stockInLookupRow(product) {
+  return [
+    excelText(product.id),
+    excelText(product.sku),
+    product.productName || "",
+    excelText(product.sizeId),
+    product.sizeName || "",
+    product.category || "",
+    product.brand || "",
+    excelText(product.barcode),
+    product.unit || "Piece",
+    product.stockItemsType || "BATCHED",
+    product.costPerUnit ?? "",
+    product.mrp ?? "",
+    product.sellingPrice ?? "",
+  ];
+}
+
+function buildStockInOptionsSheet(XLSX, optionGroups, records) {
+  const lookupRows = records.map(stockInLookupRow);
+  const lookupRowsForSheet = lookupRows.length
+    ? lookupRows
+    : [Array.from({ length: STOCK_IN_LOOKUP_HEADERS.length }, () => "")];
+  const idLookupStart = optionGroups.length + 1;
+  const skuLookupStart = idLookupStart + STOCK_IN_LOOKUP_HEADERS.length + 1;
+  const maxRows = Math.max(
+    1,
+    ...optionGroups.map((group) => group.values.length + 1),
+    lookupRowsForSheet.length + 1,
+  );
+  const rows = Array.from({ length: maxRows }, () => []);
+
+  optionGroups.forEach((group, col) => {
+    rows[0][col] = group.key;
+    group.values.forEach((value, row) => {
+      rows[row + 1][col] = excelText(value);
+    });
+  });
+
+  STOCK_IN_LOOKUP_HEADERS.forEach((header, index) => {
+    rows[0][idLookupStart + index] = header;
+  });
+  lookupRowsForSheet.forEach((lookupRow, rowIndex) => {
+    lookupRow.forEach((value, colIndex) => {
+      rows[rowIndex + 1][idLookupStart + colIndex] = excelText(value);
+    });
+  });
+
+  const skuLookupHeaders = [
+    "SKU",
+    "Product ID",
+    ...STOCK_IN_LOOKUP_HEADERS.slice(2),
+  ];
+  skuLookupHeaders.forEach((header, index) => {
+    rows[0][skuLookupStart + index] = header;
+  });
+  lookupRowsForSheet.forEach((lookupRow, rowIndex) => {
+    const skuRow = [lookupRow[1], lookupRow[0], ...lookupRow.slice(2)];
+    skuRow.forEach((value, colIndex) => {
+      rows[rowIndex + 1][skuLookupStart + colIndex] = excelText(value);
+    });
+  });
+
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1:A1");
+  for (let columnIndex = 0; columnIndex <= range.e.c; columnIndex++) {
+    for (let rowIndex = 1; rowIndex <= range.e.r; rowIndex++) {
+      const ref = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
+      if (!worksheet[ref]) continue;
+      worksheet[ref].t = "s";
+      worksheet[ref].z = "@";
+    }
+  }
+
+  return {
+    worksheet,
+    idLookupRange: `'${OPTIONS_SHEET_NAME}'!$${XLSX.utils.encode_col(
+      idLookupStart,
+    )}$2:$${XLSX.utils.encode_col(
+      idLookupStart + STOCK_IN_LOOKUP_HEADERS.length - 1,
+    )}$${lookupRowsForSheet.length + 1}`,
+    skuLookupRange: `'${OPTIONS_SHEET_NAME}'!$${XLSX.utils.encode_col(
+      skuLookupStart,
+    )}$2:$${XLSX.utils.encode_col(
+      skuLookupStart + STOCK_IN_LOOKUP_HEADERS.length - 1,
+    )}$${lookupRowsForSheet.length + 1}`,
+  };
+}
+
+function stockInLookupFormula(
+  header,
+  rowNumber,
+  idLookupRange,
+  skuLookupRange,
+) {
+  const productIdCell = `$A${rowNumber}`;
+  const skuCell = `$H${rowNumber}`;
+  if (header === "SKU") {
+    return `IF(LEN(TRIM(${productIdCell}))=0,"",IFERROR(VLOOKUP(${productIdCell},${idLookupRange},2,FALSE),""))`;
+  }
+
+  const lookupColumn = STOCK_IN_VLOOKUP_COLUMNS[header];
+  if (!lookupColumn) return "";
+  return `IF(LEN(TRIM(${productIdCell}))>0,IFERROR(VLOOKUP(${productIdCell},${idLookupRange},${lookupColumn},FALSE),""),IF(LEN(TRIM(${skuCell}))>0,IFERROR(VLOOKUP(${skuCell},${skuLookupRange},${lookupColumn},FALSE),""),""))`;
+}
+
+function applyStockInVlookupFormulas(
+  XLSX,
+  worksheet,
+  idLookupRange,
+  skuLookupRange,
+) {
+  const formulaHeaders = new Set([
+    "SKU",
+    ...Object.keys(STOCK_IN_VLOOKUP_COLUMNS),
+  ]);
+  const numericFormulaHeaders = new Set(["Cost/Unit", "MRP", "Selling Price"]);
+  for (
+    let rowNumber = 2;
+    rowNumber <= STOCK_IN_TEMPLATE_ROW_LIMIT;
+    rowNumber++
+  ) {
+    STOCK_IN_TEMPLATE_HEADERS.forEach((header, columnIndex) => {
+      if (!formulaHeaders.has(header)) return;
+      const formula = stockInLookupFormula(
+        header,
+        rowNumber,
+        idLookupRange,
+        skuLookupRange,
+      );
+      if (!formula) return;
+      const ref = XLSX.utils.encode_cell({
+        r: rowNumber - 1,
+        c: columnIndex,
+      });
+      const existingValue = worksheet[ref]?.v ?? "";
+      worksheet[ref] = {
+        t: numericFormulaHeaders.has(header) ? "n" : "s",
+        f: formula,
+        v: existingValue,
+        ...(numericFormulaHeaders.has(header) ? {} : { z: "@" }),
+      };
+    });
+  }
 }
 
 function buildCreateProductUrl(row) {
@@ -552,7 +726,7 @@ export default function StockInPage() {
       });
       const json = await res.json();
       const records = Array.isArray(json.records) ? json.records : [];
-      const rows = records.map((product) => ({
+      const productRows = records.map((product) => ({
         "Product ID": excelText(product.id),
         "Product Name": product.productName,
         "Size ID": excelText(product.sizeId),
@@ -572,6 +746,21 @@ export default function StockInPage() {
         serialNumber: "",
         Remarks: "",
       }));
+      const rows = [
+        ...productRows,
+        ...Array.from(
+          {
+            length: Math.max(
+              0,
+              STOCK_IN_TEMPLATE_ROW_LIMIT - 1 - productRows.length,
+            ),
+          },
+          () =>
+            Object.fromEntries(
+              STOCK_IN_TEMPLATE_HEADERS.map((header) => [header, ""]),
+            ),
+        ),
+      ];
 
       const XLSX = await import("xlsx");
       const worksheet = XLSX.utils.json_to_sheet(rows, {
@@ -640,7 +829,7 @@ export default function StockInPage() {
           key: "barcodes",
           name: "StockInBarcodes",
           values: sortOptions(
-            uniqueOptions(records.map((product) => product.barcode)),
+            uniqueOptions(records.map((product) => excelText(product.barcode))),
           ),
         },
         {
@@ -697,13 +886,30 @@ export default function StockInPage() {
         .filter(Boolean);
 
       const workbook = XLSX.utils.book_new();
+      const {
+        worksheet: optionsWorksheet,
+        idLookupRange,
+        skuLookupRange,
+      } = buildStockInOptionsSheet(XLSX, optionGroups, records);
+      applyStockInVlookupFormulas(
+        XLSX,
+        worksheet,
+        idLookupRange,
+        skuLookupRange,
+      );
       XLSX.utils.book_append_sheet(workbook, worksheet, "Bulk Stock In");
       XLSX.utils.book_append_sheet(
         workbook,
-        buildOptionsSheet(optionGroups),
+        optionsWorksheet,
         OPTIONS_SHEET_NAME,
       );
       addOptionNamedRanges(workbook, optionGroups);
+      workbook.Workbook = workbook.Workbook || {};
+      workbook.Workbook.CalcPr = {
+        ...(workbook.Workbook.CalcPr || {}),
+        fullCalcOnLoad: true,
+        forceFullCalc: true,
+      };
       hideOptionsSheet(workbook);
       await saveWorkbookWithValidations(
         workbook,
