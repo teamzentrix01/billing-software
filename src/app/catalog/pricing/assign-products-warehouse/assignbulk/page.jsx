@@ -7,11 +7,14 @@ import SearchableSelect from "@/components/SearchableSelect";
 import {
   OPTIONS_SHEET_NAME,
   addOptionNamedRanges,
+  applyTextFormatToColumns,
   buildOptionsSheet,
+  excelText,
   hideOptionsSheet,
   optionFormula,
   prefixMatchOptionFormula,
   saveWorkbookWithValidations,
+  sheetToJsonRows,
   sortOptions,
   uniqueOptions,
 } from "@/lib/xlsxDropdowns";
@@ -25,6 +28,7 @@ const TEMPLATE_HEADERS = [
   "location",
 ];
 const TEMPLATE_ROW_LIMIT = 5001;
+const TEXT_TEMPLATE_HEADERS = ["warehouse_id", "product_id", "sku"];
 
 async function fetchTemplateProducts() {
   const res = await fetch(
@@ -105,10 +109,10 @@ export default function AssignBulkPage() {
             .filter((record) => record.is_assigned)
             .forEach((record) =>
               rows.push([
-                warehouseId,
-                record.id,
+                excelText(warehouseId),
+                excelText(record.id),
                 record.name || "",
-                record.sku || "",
+                excelText(record.sku),
                 "",
                 "",
               ]),
@@ -122,13 +126,21 @@ export default function AssignBulkPage() {
       wch: Math.max(12, header.length + 4),
     }));
     ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+    applyTextFormatToColumns(
+      ws,
+      TEMPLATE_HEADERS,
+      TEXT_TEMPLATE_HEADERS,
+      TEMPLATE_ROW_LIMIT,
+    );
 
     const products = await fetchTemplateProducts();
     const optionGroups = [
       {
         key: "product_ids",
         name: "WarehouseAssignProductIds",
-        values: sortOptions(uniqueOptions(products.map((product) => product.id))),
+        values: sortOptions(
+          uniqueOptions(products.map((product) => excelText(product.id))),
+        ),
       },
       {
         key: "product_names",
@@ -140,7 +152,9 @@ export default function AssignBulkPage() {
       {
         key: "skus",
         name: "WarehouseAssignProductSkus",
-        values: sortOptions(uniqueOptions(products.map((product) => product.sku))),
+        values: sortOptions(
+          uniqueOptions(products.map((product) => excelText(product.sku))),
+        ),
       },
     ];
     const validations = [
@@ -182,9 +196,9 @@ export default function AssignBulkPage() {
     if (!f) return;
     setFileName(f.name || "");
     const data = await f.arrayBuffer();
-    const wb = XLSX.read(data);
+    const wb = XLSX.read(data, { cellDates: true });
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const parsed = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    const parsed = sheetToJsonRows(ws);
     setRows(parsed);
   };
 
@@ -314,7 +328,10 @@ export default function AssignBulkPage() {
               onChange={setCategoryId}
               placeholder="Any"
               searchPlaceholder="Search category..."
-              options={categoryList.map((c) => ({ value: c.id, label: c.name }))}
+              options={categoryList.map((c) => ({
+                value: c.id,
+                label: c.name,
+              }))}
             />
           </div>
         </div>
