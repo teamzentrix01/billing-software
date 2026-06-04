@@ -576,7 +576,7 @@ export default function EditStorePage() {
               {Number(form.costPerSqFt || 0) > 0 &&
               Number(form.costPerSqFt || 0) < MIN_COST_PER_SQ_FT ? (
                 <span className="mt-1 block text-xs font-semibold text-red-600">
-                  Rs. 1400 se kam nahi ho sakta
+                  Can't be less than Rs.1400
                 </span>
               ) : null}
             </Field>
