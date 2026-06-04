@@ -62,6 +62,14 @@ async function postStockIn(payload) {
   return json;
 }
 
+async function fetchCatalogOptions(endpoint) {
+  const res = await fetch(endpoint);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) return [];
+  const records = json.data?.records || json.records || [];
+  return Array.isArray(records) ? records : [];
+}
+
 const tableHeaders = [
   "Transaction ID",
   "Invoice Number",
@@ -171,12 +179,46 @@ const STOCK_IN_LOOKUP_HEADERS = [
 ];
 
 const STOCK_IN_VLOOKUP_COLUMNS = {
+  "Product ID": 1,
+  SKU: 2,
   "Product Name": 3,
   "Size ID": 4,
   "Size Name": 5,
   Category: 6,
   Brand: 7,
   Barcode: 8,
+  Unit: 9,
+  "Stock Items Type": 10,
+  "Cost/Unit": 11,
+  MRP: 12,
+  "Selling Price": 13,
+};
+
+const STOCK_IN_SKU_LOOKUP_COLUMNS = {
+  SKU: 1,
+  "Product ID": 2,
+  "Product Name": 3,
+  "Size ID": 4,
+  "Size Name": 5,
+  Category: 6,
+  Brand: 7,
+  Barcode: 8,
+  Unit: 9,
+  "Stock Items Type": 10,
+  "Cost/Unit": 11,
+  MRP: 12,
+  "Selling Price": 13,
+};
+
+const STOCK_IN_BARCODE_LOOKUP_COLUMNS = {
+  Barcode: 1,
+  "Product ID": 2,
+  SKU: 3,
+  "Product Name": 4,
+  "Size ID": 5,
+  "Size Name": 6,
+  Category: 7,
+  Brand: 8,
   Unit: 9,
   "Stock Items Type": 10,
   "Cost/Unit": 11,
@@ -231,6 +273,8 @@ function buildStockInOptionsSheet(XLSX, optionGroups, records) {
     : [Array.from({ length: STOCK_IN_LOOKUP_HEADERS.length }, () => "")];
   const idLookupStart = optionGroups.length + 1;
   const skuLookupStart = idLookupStart + STOCK_IN_LOOKUP_HEADERS.length + 1;
+  const barcodeLookupStart =
+    skuLookupStart + STOCK_IN_LOOKUP_HEADERS.length + 1;
   const maxRows = Math.max(
     1,
     ...optionGroups.map((group) => group.values.length + 1),
@@ -269,6 +313,37 @@ function buildStockInOptionsSheet(XLSX, optionGroups, records) {
     });
   });
 
+  const barcodeLookupHeaders = [
+    "Barcode",
+    "Product ID",
+    "SKU",
+    "Product Name",
+    "Size ID",
+    "Size Name",
+    "Category",
+    "Brand",
+    "Unit",
+    "Stock Items Type",
+    "Cost/Unit",
+    "MRP",
+    "Selling Price",
+  ];
+  barcodeLookupHeaders.forEach((header, index) => {
+    rows[0][barcodeLookupStart + index] = header;
+  });
+  lookupRowsForSheet.forEach((lookupRow, rowIndex) => {
+    const barcodeRow = [
+      lookupRow[7],
+      lookupRow[0],
+      lookupRow[1],
+      ...lookupRow.slice(2, 7),
+      ...lookupRow.slice(8),
+    ];
+    barcodeRow.forEach((value, colIndex) => {
+      rows[rowIndex + 1][barcodeLookupStart + colIndex] = excelText(value);
+    });
+  });
+
   const worksheet = XLSX.utils.aoa_to_sheet(rows);
   const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1:A1");
   for (let columnIndex = 0; columnIndex <= range.e.c; columnIndex++) {
@@ -292,6 +367,11 @@ function buildStockInOptionsSheet(XLSX, optionGroups, records) {
     )}$2:$${XLSX.utils.encode_col(
       skuLookupStart + STOCK_IN_LOOKUP_HEADERS.length - 1,
     )}$${lookupRowsForSheet.length + 1}`,
+    barcodeLookupRange: `'${OPTIONS_SHEET_NAME}'!$${XLSX.utils.encode_col(
+      barcodeLookupStart,
+    )}$2:$${XLSX.utils.encode_col(
+      barcodeLookupStart + barcodeLookupHeaders.length - 1,
+    )}$${lookupRowsForSheet.length + 1}`,
   };
 }
 
@@ -300,16 +380,65 @@ function stockInLookupFormula(
   rowNumber,
   idLookupRange,
   skuLookupRange,
+  barcodeLookupRange,
 ) {
   const productIdCell = `$A${rowNumber}`;
+  const barcodeCell = `$G${rowNumber}`;
   const skuCell = `$H${rowNumber}`;
+  const textValue = (cell) => `""&${cell}`;
+  const barcodeTextValue = `IF(LEFT(${textValue(
+    barcodeCell,
+  )},1)="'",MID(${textValue(barcodeCell)},2,32767),${textValue(barcodeCell)})`;
+  const lookup = (cell, range, column) =>
+    `IFERROR(VLOOKUP(${textValue(cell)},${range},${column},FALSE),"")`;
+  const barcodeLookup = (column) =>
+    `IFERROR(VLOOKUP(${barcodeTextValue},${barcodeLookupRange},${column},FALSE),"")`;
+
+  if (header === "Product ID") {
+    return `IF(LEN(TRIM(${skuCell}))>0,${lookup(
+      skuCell,
+      skuLookupRange,
+      STOCK_IN_SKU_LOOKUP_COLUMNS[header],
+    )},IF(LEN(TRIM(${barcodeCell}))>0,${barcodeLookup(
+      STOCK_IN_BARCODE_LOOKUP_COLUMNS[header],
+    )},""))`;
+  }
+
   if (header === "SKU") {
-    return `IF(LEN(TRIM(${productIdCell}))=0,"",IFERROR(VLOOKUP(${productIdCell},${idLookupRange},2,FALSE),""))`;
+    return `IF(LEN(TRIM(${productIdCell}))>0,${lookup(
+      productIdCell,
+      idLookupRange,
+      STOCK_IN_VLOOKUP_COLUMNS[header],
+    )},IF(LEN(TRIM(${barcodeCell}))>0,${barcodeLookup(
+      STOCK_IN_BARCODE_LOOKUP_COLUMNS[header],
+    )},""))`;
+  }
+
+  if (header === "Barcode") {
+    return `IF(LEN(TRIM(${productIdCell}))>0,${lookup(
+      productIdCell,
+      idLookupRange,
+      STOCK_IN_VLOOKUP_COLUMNS[header],
+    )},IF(LEN(TRIM(${skuCell}))>0,${lookup(
+      skuCell,
+      skuLookupRange,
+      STOCK_IN_SKU_LOOKUP_COLUMNS[header],
+    )},""))`;
   }
 
   const lookupColumn = STOCK_IN_VLOOKUP_COLUMNS[header];
   if (!lookupColumn) return "";
-  return `IF(LEN(TRIM(${productIdCell}))>0,IFERROR(VLOOKUP(${productIdCell},${idLookupRange},${lookupColumn},FALSE),""),IF(LEN(TRIM(${skuCell}))>0,IFERROR(VLOOKUP(${skuCell},${skuLookupRange},${lookupColumn},FALSE),""),""))`;
+  return `IF(LEN(TRIM(${productIdCell}))>0,${lookup(
+    productIdCell,
+    idLookupRange,
+    lookupColumn,
+  )},IF(LEN(TRIM(${skuCell}))>0,${lookup(
+    skuCell,
+    skuLookupRange,
+    STOCK_IN_SKU_LOOKUP_COLUMNS[header],
+  )},IF(LEN(TRIM(${barcodeCell}))>0,${barcodeLookup(
+    STOCK_IN_BARCODE_LOOKUP_COLUMNS[header],
+  )},"")))`;
 }
 
 function applyStockInVlookupFormulas(
@@ -317,11 +446,13 @@ function applyStockInVlookupFormulas(
   worksheet,
   idLookupRange,
   skuLookupRange,
+  barcodeLookupRange,
 ) {
-  const formulaHeaders = new Set([
-    "SKU",
-    ...Object.keys(STOCK_IN_VLOOKUP_COLUMNS),
-  ]);
+  const formulaHeaders = new Set(
+    Object.keys(STOCK_IN_VLOOKUP_COLUMNS).filter(
+      (header) => !["Product ID", "SKU", "Barcode"].includes(header),
+    ),
+  );
   const numericFormulaHeaders = new Set(["Cost/Unit", "MRP", "Selling Price"]);
   for (
     let rowNumber = 2;
@@ -335,6 +466,7 @@ function applyStockInVlookupFormulas(
         rowNumber,
         idLookupRange,
         skuLookupRange,
+        barcodeLookupRange,
       );
       if (!formula) return;
       const ref = XLSX.utils.encode_cell({
@@ -343,12 +475,43 @@ function applyStockInVlookupFormulas(
       });
       const existingValue = worksheet[ref]?.v ?? "";
       worksheet[ref] = {
-        t: numericFormulaHeaders.has(header) ? "n" : "s",
+        t: numericFormulaHeaders.has(header) ? "n" : "str",
         f: formula,
         v: existingValue,
-        ...(numericFormulaHeaders.has(header) ? {} : { z: "@" }),
       };
     });
+  }
+}
+
+function clearStockInQuantityColumn(XLSX, worksheet) {
+  const columnIndex = STOCK_IN_TEMPLATE_HEADERS.indexOf("Quantity");
+  if (columnIndex < 0) return;
+  for (
+    let rowNumber = 2;
+    rowNumber <= STOCK_IN_TEMPLATE_ROW_LIMIT;
+    rowNumber++
+  ) {
+    const ref = XLSX.utils.encode_cell({
+      r: rowNumber - 1,
+      c: columnIndex,
+    });
+    delete worksheet[ref];
+  }
+}
+
+function applyStockInBarcodeTextWarningCells(XLSX, worksheet, filledRowCount) {
+  const columnIndex = STOCK_IN_TEMPLATE_HEADERS.indexOf("Barcode");
+  if (columnIndex < 0) return;
+  const column = XLSX.utils.encode_col(columnIndex);
+  for (let rowNumber = 2; rowNumber <= filledRowCount + 1; rowNumber++) {
+    const ref = `${column}${rowNumber}`;
+    const cell = worksheet[ref];
+    if (!cell || String(cell.v ?? "").trim() === "") continue;
+    const value = excelText(cell.v).replace(/^'/, "");
+    cell.t = "s";
+    cell.v = value;
+    cell.w = value;
+    delete cell.z;
   }
 }
 
@@ -464,6 +627,15 @@ export default function StockInPage() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [tableData, setTableData] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
+  const [showTemplateFilters, setShowTemplateFilters] = useState(false);
+  const [templateBrands, setTemplateBrands] = useState([]);
+  const [templateCategories, setTemplateCategories] = useState([]);
+  const [loadingTemplateOptions, setLoadingTemplateOptions] = useState(false);
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
+  const [templateFilters, setTemplateFilters] = useState({
+    brandId: "",
+    categoryId: "",
+  });
   const [filters, setFilters] = useState({
     search: "",
     dateFrom: "",
@@ -521,6 +693,26 @@ export default function StockInPage() {
       })
       .finally(() => setLoadingStores(false));
   }, [showModal]);
+
+  useEffect(() => {
+    if (!showTemplateFilters) return;
+    setLoadingTemplateOptions(true);
+    Promise.all([
+      fetchCatalogOptions("/api/catalog/brands?pageSize=1000").catch(() => []),
+      fetchCatalogOptions("/api/catalog/categories?pageSize=1000").catch(
+        () => [],
+      ),
+    ])
+      .then(([brands, categories]) => {
+        setTemplateBrands(brands);
+        setTemplateCategories(categories);
+      })
+      .catch(() => {
+        setTemplateBrands([]);
+        setTemplateCategories([]);
+      })
+      .finally(() => setLoadingTemplateOptions(false));
+  }, [showTemplateFilters]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -719,13 +911,31 @@ export default function StockInPage() {
     }
   };
 
+  const handleOpenTemplateFilters = () => setShowTemplateFilters(true);
+
+  const handleCloseTemplateFilters = () => {
+    if (downloadingTemplate) return;
+    setShowTemplateFilters(false);
+  };
+
   const handleDownloadBulkTemplate = async () => {
+    setDownloadingTemplate(true);
     try {
-      const res = await fetch("/api/inventory/stockin?template=products", {
+      const params = new URLSearchParams({ template: "products" });
+      if (templateFilters.brandId)
+        params.set("brand_id", templateFilters.brandId);
+      if (templateFilters.categoryId) {
+        params.set("category_id", templateFilters.categoryId);
+      }
+      const res = await fetch(`/api/inventory/stockin?${params.toString()}`, {
         cache: "no-store",
       });
       const json = await res.json();
       const records = Array.isArray(json.records) ? json.records : [];
+      if (!records.length) {
+        alert("No products found for the selected brand/category.");
+        return;
+      }
       const productRows = records.map((product) => ({
         "Product ID": excelText(product.id),
         "Product Name": product.productName,
@@ -746,21 +956,7 @@ export default function StockInPage() {
         serialNumber: "",
         Remarks: "",
       }));
-      const rows = [
-        ...productRows,
-        ...Array.from(
-          {
-            length: Math.max(
-              0,
-              STOCK_IN_TEMPLATE_ROW_LIMIT - 1 - productRows.length,
-            ),
-          },
-          () =>
-            Object.fromEntries(
-              STOCK_IN_TEMPLATE_HEADERS.map((header) => [header, ""]),
-            ),
-        ),
-      ];
+      const rows = productRows;
 
       const XLSX = await import("xlsx");
       const worksheet = XLSX.utils.json_to_sheet(rows, {
@@ -779,8 +975,9 @@ export default function StockInPage() {
         worksheet,
         STOCK_IN_TEMPLATE_HEADERS,
         STOCK_IN_TEXT_TEMPLATE_HEADERS,
-        STOCK_IN_TEMPLATE_ROW_LIMIT,
+        Math.max(2, productRows.length + 1),
       );
+      applyStockInBarcodeTextWarningCells(XLSX, worksheet, productRows.length);
 
       const optionGroups = [
         {
@@ -864,7 +1061,6 @@ export default function StockInPage() {
         ["Size Name", "size_names"],
         ["Category", "categories"],
         ["Brand", "brands"],
-        ["Barcode", "barcodes"],
         ["SKU", "skus"],
         ["Unit", "units"],
         ["Stock Items Type", "stock_item_types"],
@@ -879,7 +1075,7 @@ export default function StockInPage() {
               : prefixMatchOptionFormula(optionGroups, optionKey, `${column}2`);
           if (!formula) return null;
           return {
-            range: `${column}2:${column}${STOCK_IN_TEMPLATE_ROW_LIMIT}`,
+            range: `${column}2:${column}${Math.max(2, productRows.length + 1)}`,
             formula,
           };
         })
@@ -890,13 +1086,9 @@ export default function StockInPage() {
         worksheet: optionsWorksheet,
         idLookupRange,
         skuLookupRange,
+        barcodeLookupRange,
       } = buildStockInOptionsSheet(XLSX, optionGroups, records);
-      applyStockInVlookupFormulas(
-        XLSX,
-        worksheet,
-        idLookupRange,
-        skuLookupRange,
-      );
+      clearStockInQuantityColumn(XLSX, worksheet);
       XLSX.utils.book_append_sheet(workbook, worksheet, "Bulk Stock In");
       XLSX.utils.book_append_sheet(
         workbook,
@@ -915,10 +1107,17 @@ export default function StockInPage() {
         workbook,
         `Stock In Template ${new Date().toISOString().slice(0, 10)}.xlsx`,
         validations,
+        "xl/worksheets/sheet1.xml",
+        {
+          quotePrefixRanges: [`G2:G${Math.max(2, productRows.length + 1)}`],
+        },
       );
+      setShowTemplateFilters(false);
     } catch (err) {
       console.error(err);
       alert("Stock In template download failed.");
+    } finally {
+      setDownloadingTemplate(false);
     }
   };
 
@@ -973,7 +1172,7 @@ export default function StockInPage() {
         actions={[
           {
             label: "Download Bulk Template",
-            onClick: handleDownloadBulkTemplate,
+            onClick: handleOpenTemplateFilters,
           },
           { label: "Upload Filled Template", onClick: handleBulkImport },
           { label: "Add Stock", primary: true, onClick: handleOpen },
@@ -1039,6 +1238,92 @@ export default function StockInPage() {
         tableData={loadingList ? [] : tableData}
         emptyMessage={loadingList ? "Loading records…" : "No Records Found"}
       />
+
+      {showTemplateFilters && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-6">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={handleCloseTemplateFilters}
+          />
+          <div className="relative mt-16 w-full max-w-lg rounded-md bg-white shadow-lg">
+            <div className="border-b border-gray-200 px-6 py-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Download Bulk Template
+              </h3>
+            </div>
+            <div className="space-y-4 p-6">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-800">
+                  Brand
+                </label>
+                <select
+                  value={templateFilters.brandId}
+                  onChange={(event) =>
+                    setTemplateFilters((current) => ({
+                      ...current,
+                      brandId: event.target.value,
+                    }))
+                  }
+                  disabled={loadingTemplateOptions || downloadingTemplate}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus:border-red-300 focus:ring-1 focus:ring-red-200"
+                >
+                  <option value="">All Brands</option>
+                  {templateBrands.map((brand) => (
+                    <option key={brand.id} value={brand.id}>
+                      {brand.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-800">
+                  Category
+                </label>
+                <select
+                  value={templateFilters.categoryId}
+                  onChange={(event) =>
+                    setTemplateFilters((current) => ({
+                      ...current,
+                      categoryId: event.target.value,
+                    }))
+                  }
+                  disabled={loadingTemplateOptions || downloadingTemplate}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus:border-red-300 focus:ring-1 focus:ring-red-200"
+                >
+                  <option value="">All Categories</option>
+                  {templateCategories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4">
+              <button
+                type="button"
+                onClick={handleCloseTemplateFilters}
+                disabled={downloadingTemplate}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadBulkTemplate}
+                disabled={loadingTemplateOptions || downloadingTemplate}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+              >
+                {downloadingTemplate
+                  ? "Downloading..."
+                  : loadingTemplateOptions
+                    ? "Loading..."
+                    : "Download"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-6">
