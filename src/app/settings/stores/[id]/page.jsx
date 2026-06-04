@@ -83,7 +83,7 @@ export default function StoreDetailsPage() {
           <section className="rounded-xl border border-gray-200 bg-gray-50 p-5">
             <h3 className="mb-4 text-[15px] font-semibold text-blue-700">Basic Information</h3>
             <InfoGrid items={[
-              ['ID', store.id],
+              ['Store Code', store.meta?.storeCode || store.meta?.shortCode],
               ['Store Name', store.name],
               ['Address Line 1', store.address_line1],
               ['Address Line 2', store.address_line2],
@@ -109,8 +109,6 @@ export default function StoreDetailsPage() {
               ['Users', store.meta?.users],
               ['Store Capacity', store.meta?.storeCapacity],
               ['Default Customer Group', store.meta?.defaultCustomerGroup],
-              ['Store GUID', store.meta?.storeGuid],
-              ['Short Code', store.meta?.shortCode],
               ['Store Area', store.meta?.storeArea],
               ['Voucher Validation', store.meta?.enableVoucherValidation ? 'Yes' : 'No'],
               ['Automatic Print', store.meta?.automaticPrint ? 'Yes' : 'No'],

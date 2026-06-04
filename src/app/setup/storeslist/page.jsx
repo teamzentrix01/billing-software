@@ -44,7 +44,7 @@ export default function StoresListPage() {
           <table className="w-full text-left">
             <thead>
               <tr>
-                <th className="p-2">ID</th>
+                <th className="p-2">Store Code</th>
                 <th className="p-2">Name</th>
                 <th className="p-2">City</th>
                 <th className="p-2">Manager</th>
@@ -54,7 +54,7 @@ export default function StoresListPage() {
             <tbody>
               {stores.map((s) => (
                 <tr key={s.id} className="border-t">
-                  <td className="p-2">{s.id}</td>
+                  <td className="p-2">{s.meta?.storeCode || s.meta?.shortCode || '—'}</td>
                   <td className="p-2">{s.name}</td>
                   <td className="p-2">{s.city}</td>
                   <td className="p-2">{s.manager_name}</td>

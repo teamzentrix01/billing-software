@@ -13,6 +13,12 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function toQty(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.trunc(parsed);
+}
+
 function normalizeDate(value) {
   if (!value) return null;
   if (typeof value === 'string') {
@@ -35,7 +41,7 @@ function normalizeDate(value) {
 
 function normalizeBatchRows(item) {
   const rawBatches = Array.isArray(item.batches) ? item.batches : [];
-  const fallbackQty = toNumber(item.qty || 0);
+  const fallbackQty = toQty(item.qty || 0);
   if (!rawBatches.length) {
     return [{
       qty: fallbackQty,
@@ -47,7 +53,7 @@ function normalizeBatchRows(item) {
 
   return rawBatches
     .map((batch) => ({
-      qty: toNumber(batch.qty || 0),
+      qty: toQty(batch.qty || 0),
       batchNo: batch.batch_no || batch.batchNo || '',
       mfgDate: batch.mfg_date || batch.mfgDate || null,
       expiryDate: batch.expiry_date || batch.expiryDate || null,
@@ -210,17 +216,25 @@ export async function POST(request, { params }) {
     const isWarehouseDestination = destinationLocationType === 'warehouse';
     const stockInMeta = typeof stockInRow.rows[0].meta === 'object' ? stockInRow.rows[0].meta : {};
     const sourceType = String(form.sourceType || stockInMeta.sourceType || '').toLowerCase();
+    const isRemoteGrn = (
+      stockInRow.rows[0].reference_type === 'remote_grn' ||
+      stockInMeta.source === 'remote_grn' ||
+      form.source === 'remote_grn' ||
+      items.some((item) => item.remoteGrn || item.source === 'remote_grn')
+    );
     const isWarehouseSource = sourceType === 'warehouse';
-    const isVendorToStoreReceipt = isStoreDestination && (
+    const isDirectVendorReceipt = (
+      isRemoteGrn ||
       stockInRow.rows[0].reference_type === 'purchase_order' ||
       stockInRow.rows[0].vendor_id ||
       stockInRow.rows[0].vendor_name ||
       sourceType === 'vendor' ||
       form.vendor
     );
+    const isVendorToStoreReceipt = isStoreDestination && isDirectVendorReceipt;
     const hasPurchaseOrder = stockInRow.rows[0].reference_type === 'purchase_order' && String(stockInRow.rows[0].reference_id || '').trim();
 
-    if (!hasPurchaseOrder && !isWarehouseSource && !isVendorToStoreReceipt) {
+    if (!hasPurchaseOrder && !isWarehouseSource && !isDirectVendorReceipt) {
       const previousStockRes = await query(
         `SELECT sii.product_id, p.name, COUNT(*)::int AS receipt_count
          FROM stock_in_items sii
@@ -244,7 +258,7 @@ export async function POST(request, { params }) {
     if (isWarehouseDestination) {
       for (const item of items) {
         const batchRows = normalizeBatchRows(item);
-        const itemQty = toNumber(item.qty || 0);
+        const itemQty = toQty(item.qty || 0);
         const batchQty = batchRows.reduce((sum, batch) => sum + toNumber(batch.qty), 0);
         if (batchRows.length === 0 || batchQty <= 0) {
           return NextResponse.json({ error: `Add at least one batch for ${item.name || 'product'}` }, { status: 400 });
@@ -269,7 +283,7 @@ export async function POST(request, { params }) {
     if (isStoreDestination && !isVendorToStoreReceipt) {
       const requestedByProduct = items.reduce((acc, item) => {
         const pid = Number(item.product_id);
-        const qty = Number(item.qty || 0);
+        const qty = toQty(item.qty || 0);
         if (pid && qty > 0) acc[pid] = (acc[pid] || 0) + qty;
         return acc;
       }, {});
@@ -311,7 +325,7 @@ export async function POST(request, { params }) {
     let totalCost  = Number(form.other_charges || 0);
     let totalTax   = 0;
     for (const item of items) {
-      const qty  = Number(item.qty        || 0);
+      const qty  = toQty(item.qty        || 0);
       const cost = Number(item.cost_price || 0);
       const tax  = Number(item.tax_value  || 0);
       if (!item.product_id || qty <= 0) {
@@ -338,7 +352,7 @@ export async function POST(request, { params }) {
         const catalogEntry = catalogMap[pid];
         // Always store the canonical name from the catalog
         const productName  = catalogEntry.name;
-        const qty          = Number(item.qty        || 1);
+        const qty          = toQty(item.qty        || 1);
         const costPrice    = Number(item.cost_price || 0);
         const taxValue     = Number(item.tax_value  || 0);
         const mrp          = Number(item.mrp || 0);
