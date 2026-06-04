@@ -198,6 +198,60 @@ function patchWorksheetValidations(xml, validations) {
   );
 }
 
+function patchStylesQuotePrefix(xml) {
+  const match = xml.match(/<cellXfs\b([^>]*)count="(\d+)"([^>]*)>/);
+  if (!match) return { xml, styleIndex: 0 };
+
+  const styleIndex = Number(match[2]);
+  const nextOpenTag = match[0].replace(
+    /count="\d+"/,
+    `count="${styleIndex + 1}"`,
+  );
+  const quotePrefixStyle =
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" quotePrefix="1"/>';
+
+  return {
+    styleIndex,
+    xml: xml
+      .replace(match[0], nextOpenTag)
+      .replace("</cellXfs>", `${quotePrefixStyle}</cellXfs>`),
+  };
+}
+
+function parseCellRange(range) {
+  const match = String(range || "").match(
+    /^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/i,
+  );
+  if (!match) return [];
+  const startColumn = match[1].toUpperCase();
+  const endColumn = (match[3] || match[1]).toUpperCase();
+  if (startColumn !== endColumn) return [];
+  const startRow = Number(match[2]);
+  const endRow = Number(match[4] || match[2]);
+  if (!Number.isFinite(startRow) || !Number.isFinite(endRow)) return [];
+  const refs = [];
+  for (let row = startRow; row <= endRow; row++)
+    refs.push(`${startColumn}${row}`);
+  return refs;
+}
+
+function patchWorksheetQuotePrefix(xml, ranges, styleIndex) {
+  const withoutIgnoredErrors = xml.replace(
+    /<ignoredErrors[\s\S]*?<\/ignoredErrors>/g,
+    "",
+  );
+  const refs = ranges.flatMap(parseCellRange);
+  return refs.reduce((nextXml, ref) => {
+    const cellPattern = new RegExp(`<c\\b([^>]*\\br="${ref}"[^>]*)>`, "i");
+    return nextXml.replace(cellPattern, (cellTag, attributes) => {
+      const nextAttributes = /\bs="\d+"/.test(attributes)
+        ? attributes.replace(/\bs="\d+"/, `s="${styleIndex}"`)
+        : `${attributes} s="${styleIndex}"`;
+      return `<c${nextAttributes}>`;
+    });
+  }, withoutIgnoredErrors);
+}
+
 export function uniqueOptions(values) {
   return [
     ...new Set(
@@ -400,6 +454,7 @@ export async function saveWorkbookWithValidations(
   fileName,
   validations,
   worksheetPath = "xl/worksheets/sheet1.xml",
+  options = {},
 ) {
   const buffer = XLSX.write(workbook, {
     bookType: "xlsx",
@@ -411,12 +466,27 @@ export async function saveWorkbookWithValidations(
   if (!worksheet) throw new Error("Template worksheet not found");
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
-  entries.set(
-    worksheetPath,
-    encoder.encode(
-      patchWorksheetValidations(decoder.decode(worksheet), validations),
-    ),
+  let worksheetXml = patchWorksheetValidations(
+    decoder.decode(worksheet),
+    validations,
   );
+  const quotePrefixRanges = Array.isArray(options.quotePrefixRanges)
+    ? options.quotePrefixRanges
+    : [];
+  if (quotePrefixRanges.length) {
+    const stylesPath = "xl/styles.xml";
+    const styles = entries.get(stylesPath);
+    if (styles) {
+      const patchedStyles = patchStylesQuotePrefix(decoder.decode(styles));
+      entries.set(stylesPath, encoder.encode(patchedStyles.xml));
+      worksheetXml = patchWorksheetQuotePrefix(
+        worksheetXml,
+        quotePrefixRanges,
+        patchedStyles.styleIndex,
+      );
+    }
+  }
+  entries.set(worksheetPath, encoder.encode(worksheetXml));
 
   const url = URL.createObjectURL(writeZipEntries(entries));
   const link = document.createElement("a");
