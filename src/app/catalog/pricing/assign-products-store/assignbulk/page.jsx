@@ -7,11 +7,14 @@ import SearchableSelect from "@/components/SearchableSelect";
 import {
   OPTIONS_SHEET_NAME,
   addOptionNamedRanges,
+  applyTextFormatToColumns,
   buildOptionsSheet,
+  excelText,
   hideOptionsSheet,
   optionFormula,
   prefixMatchOptionFormula,
   saveWorkbookWithValidations,
+  sheetToJsonRows,
   sortOptions,
   uniqueOptions,
 } from "@/lib/xlsxDropdowns";
@@ -26,6 +29,7 @@ const TEMPLATE_HEADERS = [
   "sell_on_store",
 ];
 const TEMPLATE_ROW_LIMIT = 5001;
+const TEXT_TEMPLATE_HEADERS = ["store_id", "product_id", "barcode", "sku"];
 
 async function fetchTemplateProducts(categoryId = "") {
   const params = new URLSearchParams({ pageSize: "10000", is_active: "true" });
@@ -74,11 +78,11 @@ export default function AssignBulkStep1() {
             .filter((record) => record.is_assigned)
             .forEach((record) =>
               rows.push([
-                storeId,
-                record.id,
+                excelText(storeId),
+                excelText(record.id),
                 record.name || "",
-                record.barcode || "",
-                record.sku || "",
+                excelText(record.barcode),
+                excelText(record.sku),
                 record.store_selling_price ?? record.selling_price ?? "",
                 "Yes",
               ]),
@@ -92,13 +96,21 @@ export default function AssignBulkStep1() {
       wch: Math.max(12, header.length + 4),
     }));
     ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+    applyTextFormatToColumns(
+      ws,
+      TEMPLATE_HEADERS,
+      TEXT_TEMPLATE_HEADERS,
+      TEMPLATE_ROW_LIMIT,
+    );
 
     const products = await fetchTemplateProducts(category);
     const optionGroups = [
       {
         key: "product_ids",
         name: "StoreAssignProductIds",
-        values: sortOptions(uniqueOptions(products.map((product) => product.id))),
+        values: sortOptions(
+          uniqueOptions(products.map((product) => excelText(product.id))),
+        ),
       },
       {
         key: "product_names",
@@ -110,12 +122,16 @@ export default function AssignBulkStep1() {
       {
         key: "barcodes",
         name: "StoreAssignProductBarcodes",
-        values: sortOptions(uniqueOptions(products.map((product) => product.barcode))),
+        values: sortOptions(
+          uniqueOptions(products.map((product) => excelText(product.barcode))),
+        ),
       },
       {
         key: "skus",
         name: "StoreAssignProductSkus",
-        values: sortOptions(uniqueOptions(products.map((product) => product.sku))),
+        values: sortOptions(
+          uniqueOptions(products.map((product) => excelText(product.sku))),
+        ),
       },
       {
         key: "sell_on_store",
@@ -163,9 +179,9 @@ export default function AssignBulkStep1() {
     if (!file) return;
     setFileName(file.name || "");
     const data = await file.arrayBuffer();
-    const wb = XLSX.read(data);
+    const wb = XLSX.read(data, { cellDates: true });
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const parsed = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    const parsed = sheetToJsonRows(ws);
     setUploadRows(parsed);
   };
 

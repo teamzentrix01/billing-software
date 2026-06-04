@@ -12,7 +12,9 @@ import {
 import {
   OPTIONS_SHEET_NAME,
   addOptionNamedRanges,
+  applyTextFormatToColumns,
   buildOptionsSheet,
+  excelText,
   hideOptionsSheet,
   optionFormula,
   prefixMatchOptionFormula,
@@ -145,6 +147,14 @@ const STOCK_IN_TEMPLATE_HEADERS = [
 ];
 const PENDING_STOCK_IN_BULK_KEY = "pendingStockInBulkRows";
 const STOCK_IN_TEMPLATE_ROW_LIMIT = 5001;
+const STOCK_IN_TEXT_TEMPLATE_HEADERS = [
+  "Product ID",
+  "Size ID",
+  "Barcode",
+  "SKU",
+  "Serial Number (serialNumber)",
+  "serialNumber",
+];
 
 function formatFileSize(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -543,14 +553,14 @@ export default function StockInPage() {
       const json = await res.json();
       const records = Array.isArray(json.records) ? json.records : [];
       const rows = records.map((product) => ({
-        "Product ID": product.id,
+        "Product ID": excelText(product.id),
         "Product Name": product.productName,
-        "Size ID": product.sizeId,
+        "Size ID": excelText(product.sizeId),
         "Size Name": product.sizeName,
         Category: product.category,
         Brand: product.brand,
-        Barcode: product.barcode,
-        SKU: product.sku,
+        Barcode: excelText(product.barcode),
+        SKU: excelText(product.sku),
         Unit: product.unit || "Piece",
         "Stock Items Type": product.stockItemsType || "BATCHED",
         Quantity: "",
@@ -568,15 +578,28 @@ export default function StockInPage() {
         header: STOCK_IN_TEMPLATE_HEADERS,
       });
       worksheet["!cols"] = STOCK_IN_TEMPLATE_HEADERS.map((header) => ({
-        wch: Math.max(12, Math.min(28, header.length + 2)),
+        wch:
+          header === "Barcode"
+            ? 20
+            : ["Product ID", "Size ID", "SKU"].includes(header)
+              ? 16
+              : Math.max(12, Math.min(28, header.length + 2)),
       }));
       worksheet["!freeze"] = { xSplit: 0, ySplit: 1 };
+      applyTextFormatToColumns(
+        worksheet,
+        STOCK_IN_TEMPLATE_HEADERS,
+        STOCK_IN_TEXT_TEMPLATE_HEADERS,
+        STOCK_IN_TEMPLATE_ROW_LIMIT,
+      );
 
       const optionGroups = [
         {
           key: "product_ids",
           name: "StockInProductIds",
-          values: sortOptions(uniqueOptions(records.map((product) => product.id))),
+          values: sortOptions(
+            uniqueOptions(records.map((product) => excelText(product.id))),
+          ),
         },
         {
           key: "product_names",
@@ -588,32 +611,44 @@ export default function StockInPage() {
         {
           key: "size_ids",
           name: "StockInSizeIds",
-          values: sortOptions(uniqueOptions(records.map((product) => product.sizeId))),
+          values: sortOptions(
+            uniqueOptions(records.map((product) => excelText(product.sizeId))),
+          ),
         },
         {
           key: "size_names",
           name: "StockInSizeNames",
-          values: sortOptions(uniqueOptions(records.map((product) => product.sizeName))),
+          values: sortOptions(
+            uniqueOptions(records.map((product) => product.sizeName)),
+          ),
         },
         {
           key: "categories",
           name: "StockInCategories",
-          values: sortOptions(uniqueOptions(records.map((product) => product.category))),
+          values: sortOptions(
+            uniqueOptions(records.map((product) => product.category)),
+          ),
         },
         {
           key: "brands",
           name: "StockInBrands",
-          values: sortOptions(uniqueOptions(records.map((product) => product.brand))),
+          values: sortOptions(
+            uniqueOptions(records.map((product) => product.brand)),
+          ),
         },
         {
           key: "barcodes",
           name: "StockInBarcodes",
-          values: sortOptions(uniqueOptions(records.map((product) => product.barcode))),
+          values: sortOptions(
+            uniqueOptions(records.map((product) => product.barcode)),
+          ),
         },
         {
           key: "skus",
           name: "StockInSkus",
-          values: sortOptions(uniqueOptions(records.map((product) => product.sku))),
+          values: sortOptions(
+            uniqueOptions(records.map((product) => product.sku)),
+          ),
         },
         {
           key: "units",
@@ -944,9 +979,14 @@ export default function StockInPage() {
                     <SearchableSelect
                       value={destination}
                       onChange={setDestination}
-                      placeholder={loadingStores ? "Loading..." : "Select Destination"}
+                      placeholder={
+                        loadingStores ? "Loading..." : "Select Destination"
+                      }
                       searchPlaceholder="Search destination..."
-                      options={destinationStores.map((s) => ({ value: s.id, label: s.name }))}
+                      options={destinationStores.map((s) => ({
+                        value: s.id,
+                        label: s.name,
+                      }))}
                       disabled={loadingStores}
                     />
                   </div>
