@@ -212,6 +212,107 @@ export function sortOptions(values) {
   );
 }
 
+export function excelText(value) {
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+export function normalizeSpreadsheetCell(value, cell) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Number.isInteger(value) ? String(value) : String(value);
+  }
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  const normalized =
+    trimmed.startsWith("'") && trimmed.length > 1 ? trimmed.slice(1) : trimmed;
+  if (/^[+-]?\d+(?:\.\d+)?e[+-]?\d+$/i.test(normalized)) {
+    const raw = cell?.v;
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      return Number.isInteger(raw) ? String(raw) : String(raw);
+    }
+  }
+  return normalized;
+}
+
+export function isBlankSpreadsheetRow(row) {
+  return Object.values(row || {}).every(
+    (value) => String(value ?? "").trim() === "",
+  );
+}
+
+export function sheetToJsonRows(worksheet, options = {}) {
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    defval: "",
+    raw: false,
+    ...options,
+  });
+  if (options.header === 1) {
+    return rows
+      .map((row, rowIndex) =>
+        row.map((value, columnIndex) =>
+          normalizeSpreadsheetCell(
+            value,
+            worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })],
+          ),
+        ),
+      )
+      .filter((row) => !isBlankSpreadsheetRow(row));
+  }
+
+  const headerRow = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    defval: "",
+    blankrows: false,
+    raw: false,
+  })[options.range || 0];
+  return rows
+    .map((row, rowIndex) =>
+      Object.fromEntries(
+        Object.entries(row || {}).map(([key, value]) => {
+          const columnIndex = Array.isArray(headerRow)
+            ? headerRow.findIndex((header) => String(header) === String(key))
+            : -1;
+          const cell =
+            columnIndex >= 0
+              ? worksheet[
+                  XLSX.utils.encode_cell({
+                    r: rowIndex + 1 + (Number(options.range) || 0),
+                    c: columnIndex,
+                  })
+                ]
+              : null;
+          return [key, normalizeSpreadsheetCell(value, cell)];
+        }),
+      ),
+    )
+    .filter((row) => !isBlankSpreadsheetRow(row));
+}
+
+export function applyTextFormatToColumns(
+  worksheet,
+  headers,
+  columnHeaders,
+  rowLimit = 5001,
+) {
+  const textHeaders = new Set(columnHeaders);
+  const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1:A1");
+  headers.forEach((header, columnIndex) => {
+    if (!textHeaders.has(header)) return;
+    const column = XLSX.utils.encode_col(columnIndex);
+    for (let row = 2; row <= rowLimit; row++) {
+      const ref = `${column}${row}`;
+      if (!worksheet[ref]) worksheet[ref] = { t: "s", v: "" };
+      worksheet[ref].t = "s";
+      worksheet[ref].v = excelText(worksheet[ref].v);
+      worksheet[ref].w = excelText(worksheet[ref].v);
+      worksheet[ref].z = "@";
+    }
+    range.e.r = Math.max(range.e.r, rowLimit - 1);
+    range.e.c = Math.max(range.e.c, columnIndex);
+  });
+  worksheet["!ref"] = XLSX.utils.encode_range(range);
+}
+
 export function buildOptionsSheet(optionGroups) {
   const maxRows = Math.max(
     1,
@@ -221,10 +322,21 @@ export function buildOptionsSheet(optionGroups) {
   optionGroups.forEach((group, col) => {
     rows[0][col] = group.key;
     group.values.forEach((value, row) => {
-      rows[row + 1][col] = value;
+      rows[row + 1][col] = excelText(value);
     });
   });
-  return XLSX.utils.aoa_to_sheet(rows);
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  optionGroups.forEach((group, col) => {
+    if (!group.values.length) return;
+    const column = XLSX.utils.encode_col(col);
+    for (let row = 2; row <= group.values.length + 1; row++) {
+      const ref = `${column}${row}`;
+      if (!worksheet[ref]) continue;
+      worksheet[ref].t = "s";
+      worksheet[ref].z = "@";
+    }
+  });
+  return worksheet;
 }
 
 export function optionFormula(optionGroups, key) {
