@@ -515,6 +515,17 @@ function applyStockInBarcodeTextWarningCells(XLSX, worksheet, filledRowCount) {
   }
 }
 
+function applyStockInExpiryDateFormat(XLSX, worksheet, rowLimit) {
+  const columnIndex = STOCK_IN_TEMPLATE_HEADERS.indexOf("Expiry Date");
+  if (columnIndex < 0) return;
+  const column = XLSX.utils.encode_col(columnIndex);
+  for (let rowNumber = 2; rowNumber <= rowLimit; rowNumber++) {
+    const ref = `${column}${rowNumber}`;
+    if (!worksheet[ref]) worksheet[ref] = { t: "s", v: "" };
+    worksheet[ref].z = "dd/mm/yy";
+  }
+}
+
 function buildCreateProductUrl(row) {
   const params = new URLSearchParams();
   params.set("returnTo", "/inventory/stockin?resumeStockInBulk=1");
@@ -978,6 +989,11 @@ export default function StockInPage() {
         Math.max(2, productRows.length + 1),
       );
       applyStockInBarcodeTextWarningCells(XLSX, worksheet, productRows.length);
+      applyStockInExpiryDateFormat(
+        XLSX,
+        worksheet,
+        Math.max(2, productRows.length + 1),
+      );
 
       const optionGroups = [
         {
