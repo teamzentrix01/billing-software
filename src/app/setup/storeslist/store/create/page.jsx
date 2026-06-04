@@ -664,7 +664,7 @@ export default function CreateStorePage() {
                   value={form.managerName}
                   onChange={onChange}
                   className={inputClass("managerName")}
-                  placeholder="John Doe"
+                  placeholder="Enter Name"
                 />
               </Field>
 
@@ -688,7 +688,7 @@ export default function CreateStorePage() {
                     value={form.managerEmail}
                     onChange={onChange}
                     className={inputClass("managerEmail")}
-                    placeholder="contact@queuebuster.co"
+                    placeholder="Enter email"
                   />
                 </Field>
               </div>
@@ -765,7 +765,7 @@ export default function CreateStorePage() {
                   {Number(form.costPerSqFt || 0) > 0 &&
                   Number(form.costPerSqFt || 0) < MIN_COST_PER_SQ_FT ? (
                     <span className="mt-1 block text-xs font-semibold text-red-600">
-                      Rs. 1400 se kam nahi ho sakta
+                      Can't be less than Rs.1400
                     </span>
                   ) : null}
                 </Field>
