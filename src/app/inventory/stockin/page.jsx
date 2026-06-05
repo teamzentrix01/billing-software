@@ -539,77 +539,53 @@ function buildCreateProductUrl(row) {
   return `/catalog/products/create?${params.toString()}`;
 }
 
+function normalizeProductLookupValue(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^'+/, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function compactProductLookupValue(value) {
+  return normalizeProductLookupValue(value).replace(/[^a-z0-9]/g, "");
+}
+
 function findStockInTemplateProductMatch(
   products,
   { productId, productName, barcode, sku },
 ) {
-  const byProductId = String(productId || "")
-    .trim()
-    .toLowerCase();
-  const byBarcode = String(barcode || "")
-    .trim()
-    .toLowerCase();
-  const bySku = String(sku || "")
-    .trim()
-    .toLowerCase();
-  const byName = String(productName || "")
-    .trim()
-    .toLowerCase();
+  const lookups = [
+    normalizeProductLookupValue(productId),
+    normalizeProductLookupValue(barcode),
+    normalizeProductLookupValue(sku),
+    normalizeProductLookupValue(productName),
+  ].filter(Boolean);
+  const compactLookups = lookups.map(compactProductLookupValue).filter(Boolean);
 
-  if (byProductId) {
-    return (
-      products.find(
-        (product) =>
-          String(product.id || "")
-            .trim()
-            .toLowerCase() === byProductId ||
-          String(product.productId || "")
-            .trim()
-            .toLowerCase() === byProductId,
-      ) || null
-    );
-  }
+  for (const product of products || []) {
+    const identifiers = [
+      product.id,
+      product.productId,
+      product.barcode,
+      product.sku,
+      product.productName,
+    ];
+    const normalizedIdentifiers = identifiers
+      .map(normalizeProductLookupValue)
+      .filter(Boolean);
+    if (lookups.some((lookup) => normalizedIdentifiers.includes(lookup))) {
+      return product;
+    }
 
-  if (byBarcode) {
-    return (
-      products.find(
-        (product) =>
-          String(product.barcode || "")
-            .trim()
-            .toLowerCase() === byBarcode ||
-          String(product.sku || "")
-            .trim()
-            .toLowerCase() === byBarcode,
-      ) || null
-    );
-  }
-
-  if (bySku) {
-    return (
-      products.find(
-        (product) =>
-          String(product.sku || "")
-            .trim()
-            .toLowerCase() === bySku ||
-          String(product.barcode || "")
-            .trim()
-            .toLowerCase() === bySku ||
-          String(product.productId || "")
-            .trim()
-            .toLowerCase() === bySku,
-      ) || null
-    );
-  }
-
-  if (byName) {
-    return (
-      products.find(
-        (product) =>
-          String(product.productName || "")
-            .trim()
-            .toLowerCase() === byName,
-      ) || null
-    );
+    const compactIdentifiers = identifiers
+      .map(compactProductLookupValue)
+      .filter(Boolean);
+    if (
+      compactLookups.some((lookup) => compactIdentifiers.includes(lookup))
+    ) {
+      return product;
+    }
   }
 
   return null;
@@ -1020,11 +996,28 @@ export default function StockInPage() {
 
     const selectedRows = rows
       .map((row, index) => {
-        const productId = getBulkField(row, ["product_id"]);
-        const productName = getBulkField(row, ["product_name", "name"]);
-        const barcode = getBulkField(row, ["barcode"]);
-        const sku = getBulkField(row, ["sku"]);
-        const qty = Number(getBulkField(row, ["quantity", "qty"], 0));
+        const productId = getBulkField(row, [
+          "product_id",
+          "product_code",
+          "item_code",
+          "code",
+        ]);
+        const productName = getBulkField(row, [
+          "product_name",
+          "item_name",
+          "product",
+          "name",
+        ]);
+        const barcode = getBulkField(row, [
+          "barcode",
+          "bar_code",
+          "ean",
+          "upc",
+        ]);
+        const sku = getBulkField(row, ["sku", "sku_code", "barcode_value"]);
+        const qty = Number(
+          getBulkField(row, ["quantity", "qty", "stock_qty", "stock_in_qty"], 0),
+        );
         if (!Number.isFinite(qty) || qty <= 0) return null;
         if (
           ![productId, productName, barcode, sku].some((value) =>
@@ -1066,7 +1059,11 @@ export default function StockInPage() {
           qty,
           cost_price:
             Number(
-              getBulkField(row, ["cost_unit", "cost_per_unit", "cost"], 0),
+              getBulkField(
+                row,
+                ["cost_unit", "cost_per_unit", "cost_price", "cost"],
+                0,
+              ),
             ) || 0,
           tax_value: 0,
           batch_no: batchNo,
