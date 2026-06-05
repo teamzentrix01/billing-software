@@ -949,6 +949,7 @@ export default function StockInPage() {
   };
 
   const closeBulkPreview = () => {
+    window.sessionStorage.removeItem(PENDING_STOCK_IN_BULK_KEY);
     setBulkPreviewRows([]);
     setBulkPreviewSelected({});
   };
@@ -1187,7 +1188,7 @@ export default function StockInPage() {
       const json = await res.json();
       const records = Array.isArray(json.records) ? json.records : [];
       if (!records.length) {
-        alert("No products found for the selected brand/category.");
+        alert("No products found for the selected vendor, brand or category.");
         return;
       }
       const productRows = records.map((product) => ({
