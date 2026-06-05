@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { query, getClient } from "@/lib/db";
 import { ensureStockInSchema } from "@/lib/stockInSchema";
 import { ensureCatalogExtrasSchema } from "@/lib/catalogExtrasSchema";
+import { ensureVendorsSchema } from "@/lib/vendorsSchema";
 import {
   appendStoreScope,
   requireAuth,
@@ -21,6 +22,7 @@ export async function GET(request) {
   try {
     await ensureStockInSchema();
     await ensureCatalogExtrasSchema();
+    await ensureVendorsSchema();
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
 
@@ -59,21 +61,29 @@ export async function GET(request) {
       }
       if (vendorIds.length) {
         templateParams.push(vendorIds);
-        templateWhere.push(`EXISTS (
-          SELECT 1
-          FROM stock_in si_vendor
-          JOIN stock_in_items sii_vendor ON sii_vendor.stock_in_id = si_vendor.id
-          LEFT JOIN vendors v_vendor ON v_vendor.id = si_vendor.vendor_id
-          WHERE sii_vendor.product_id = p.id
-            AND (
-              si_vendor.vendor_id = ANY($${templateParams.length}::int[])
-              OR EXISTS (
-                SELECT 1
-                FROM vendors selected_vendor
-                WHERE selected_vendor.id = ANY($${templateParams.length}::int[])
-                  AND LOWER(selected_vendor.name) = LOWER(COALESCE(si_vendor.vendor_name, ''))
+        templateWhere.push(`(
+          EXISTS (
+            SELECT 1
+            FROM vendor_brands vb_vendor
+            WHERE vb_vendor.vendor_id = ANY($${templateParams.length}::int[])
+              AND vb_vendor.brand_id = p.brand_id
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM stock_in si_vendor
+            JOIN stock_in_items sii_vendor ON sii_vendor.stock_in_id = si_vendor.id
+            WHERE sii_vendor.product_id = p.id
+              AND (
+                si_vendor.vendor_id = ANY($${templateParams.length}::int[])
+                OR EXISTS (
+                  SELECT 1
+                  FROM vendors selected_vendor
+                  WHERE selected_vendor.id = ANY($${templateParams.length}::int[])
+                    AND LOWER(selected_vendor.name) = LOWER(COALESCE(si_vendor.vendor_name, ''))
+                )
               )
             )
+          )
         )`);
       }
 

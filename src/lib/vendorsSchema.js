@@ -1,6 +1,6 @@
 import { query } from '@/lib/db';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 let ensuredVersion = 0;
 
 export async function ensureVendorsSchema() {
@@ -60,6 +60,16 @@ export async function ensureVendorsSchema() {
       WHERE mobile_number IS NOT NULL AND mobile_number <> '';
     CREATE INDEX IF NOT EXISTS idx_vendors_active_name
       ON vendors(is_active, name);
+
+    CREATE TABLE IF NOT EXISTS vendor_brands (
+      vendor_id INTEGER NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+      brand_id INTEGER NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (vendor_id, brand_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_vendor_brands_brand_id
+      ON vendor_brands(brand_id);
   `);
   ensuredVersion = SCHEMA_VERSION;
 }
