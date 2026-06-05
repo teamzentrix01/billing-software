@@ -304,7 +304,8 @@ export default function CatalogListPage({
         ...PRODUCT_ATTRIBUTE_COLUMNS,
         "Opening Stock Store",
         "Opening Stock Qty",
-        "Default Low Stock Value",
+        "Low Stock Qty",
+        "MBQ",
         "Disable Billing On Zero",
         "Disable Sales On Expiry",
         "Inventory Method",
@@ -363,12 +364,13 @@ export default function CatalogListPage({
         Description: "description",
         "Opening Stock Store": "inventory_store_name",
         "Opening Stock Qty": "opening_stock_qty",
-        "Default Low Stock Value": "default_low_stock_value",
+        "Low Stock Qty": "default_low_stock_value",
+        MBQ: "minimum_base_quantity",
         "Disable Billing On Zero": "disable_billing_on_zero",
         "Disable Sales On Expiry": "disable_sales_on_expiry",
         "Inventory Method": "inventory_method",
       };
-      const dataRows = templateRecords.map((record) =>
+      const dataRows = (bulkImportType === "products" ? [] : templateRecords).map((record) =>
         headers.map((header) => {
           const normalizedHeader = cleanHeader(header);
           const value = getTemplateCellValue(
@@ -461,20 +463,21 @@ export default function CatalogListPage({
         .map((header) => headerIndex(header))
         .filter((index) => index >= 0);
       const validations = [];
-      const addValidation = (col, formula) => {
+      const addValidation = (col, formula, options = {}) => {
         if (col < 0 || !formula) return;
         validations.push({
           range: `${XLSX.utils.encode_col(col)}2:${XLSX.utils.encode_col(col)}${TEMPLATE_ROW_LIMIT}`,
           formula,
+          ...options,
         });
       };
       for (const col of booleanCols) addValidation(col, '"Yes,No"');
-      addValidation(unitCol, '"PCS,KG,LTR"');
+      addValidation(unitCol, '"PCS,KG,GRAMS,LTR"');
       addValidation(includeTaxCol, '"Yes,No"');
       addValidation(inventoryMethodCol, '"direct,indirect"');
       addValidation(stockTypeCol, '"batched,unbatched"');
       if (bulkImportType === "products") {
-        const addPrefixValidation = (header, optionKey) => {
+        const addFilterableDropdownValidation = (header, optionKey) => {
           const col = headerIndex(header);
           if (col < 0) return;
           addValidation(
@@ -484,13 +487,14 @@ export default function CatalogListPage({
               optionKey,
               `${XLSX.utils.encode_col(col)}2`,
             ),
+            { showErrorMessage: false },
           );
         };
-        addPrefixValidation("Brand", "brands");
-        addPrefixValidation("Category", "categories");
-        addPrefixValidation("Sub Category", "sub_categories");
-        addPrefixValidation("Income Head", "income_heads");
-        addPrefixValidation("Opening Stock Store", "stores");
+        addFilterableDropdownValidation("Brand", "brands");
+        addFilterableDropdownValidation("Category", "categories");
+        addFilterableDropdownValidation("Sub Category", "sub_categories");
+        addFilterableDropdownValidation("Income Head", "income_heads");
+        addFilterableDropdownValidation("Opening Stock Store", "stores");
       }
       XLSX.utils.book_append_sheet(wb, ws, "Template");
       if (
@@ -510,7 +514,9 @@ export default function CatalogListPage({
           ["Field", "Requirement / allowed values"],
           ["Product Name", "Required"],
           ["Selling Price", "Required"],
-          ["Unit", "Required: PCS, KG, or LTR"],
+          ["Unit", "Required: PCS, KG, GRAMS, or LTR"],
+          ["Low Stock Qty", "Triggers low stock alerts and ARS reorder suggestions."],
+          ["MBQ", "Minimum base quantity. Example: use 0.65 for 650gm when Unit is KG."],
           [
             "include_tax",
             "Yes/No. Use Yes when GST is already included in selling_price.",

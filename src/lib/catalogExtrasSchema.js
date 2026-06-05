@@ -49,6 +49,7 @@ const CREATE_PRODUCT_SALEABILITY_SQL = `
     selling_price NUMERIC(14, 2) NOT NULL DEFAULT 0,
     mrp NUMERIC(14, 2) NOT NULL DEFAULT 0,
     low_stock_value NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    minimum_base_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (product_id, store_id)
@@ -394,7 +395,8 @@ export async function ensureCatalogExtrasSchema() {
         ALTER TABLE product_saleability
           ADD COLUMN IF NOT EXISTS selling_price NUMERIC(14, 2) NOT NULL DEFAULT 0,
           ADD COLUMN IF NOT EXISTS mrp NUMERIC(14, 2) NOT NULL DEFAULT 0,
-          ADD COLUMN IF NOT EXISTS low_stock_value NUMERIC(14, 2) NOT NULL DEFAULT 0;
+          ADD COLUMN IF NOT EXISTS low_stock_value NUMERIC(14, 2) NOT NULL DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS minimum_base_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0;
       `);
       await query(CREATE_PROMOTIONS_SQL);
       // Add additional promotion columns used by the UI

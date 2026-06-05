@@ -20,6 +20,7 @@ export async function GET(request, { params }) {
 
     const res = await query(
       `SELECT s.id, s.method, s.destination_id, s.meta, s.status, s.created_at,
+              s.transaction_id, s.reference_type, s.reference_id,
               s.vendor_name, s.invoice_date, s.invoice_number, s.other_charges, s.remarks,
               s.apply_taxes, st.name AS destination_name, st.meta AS destination_meta
        FROM stock_in s
@@ -50,6 +51,9 @@ export async function GET(request, { params }) {
     return NextResponse.json({
       id: row.id,
       method: row.method,
+      transactionId: row.transaction_id || `STK-${String(row.id).padStart(4, '0')}`,
+      referenceType: row.reference_type || 'stock_in',
+      referenceId: row.reference_id || row.transaction_id || `STK-${String(row.id).padStart(4, '0')}`,
       destination: row.destination_id,
       destinationName: row.destination_name,
       destinationLocationType: destinationMeta.locationType || 'Warehouse',

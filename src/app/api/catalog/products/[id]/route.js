@@ -21,7 +21,8 @@ async function ensureProductDiscountSchema() {
 
 function normalizeUnit(value) {
   const unit = String(value || 'PCS').trim().toUpperCase();
-  return ['PCS', 'KG', 'LTR'].includes(unit) ? unit : 'PCS';
+  if (['G', 'GM', 'GRAM', 'GRAMS'].includes(unit)) return 'GRAMS';
+  return ['PCS', 'KG', 'GRAMS', 'LTR'].includes(unit) ? unit : 'PCS';
 }
 
 function normalizeStockItemType(value) {

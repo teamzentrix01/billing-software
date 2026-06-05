@@ -761,7 +761,8 @@ export default function StockInPage() {
   const [loadingTemplateOptions, setLoadingTemplateOptions] = useState(false);
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [templateFilters, setTemplateFilters] = useState({
-    brandId: "",
+    vendorId: "",
+    brandIds: [],
     categoryId: "",
   });
   const [filters, setFilters] = useState({
@@ -771,6 +772,8 @@ export default function StockInPage() {
     source: "",
   });
   const [pendingMissingProduct, setPendingMissingProduct] = useState(null);
+  const [bulkPreviewRows, setBulkPreviewRows] = useState([]);
+  const [bulkPreviewSelected, setBulkPreviewSelected] = useState({});
 
   // ── NEW: state for destination picker modal (bulk import flow) ──
   const [destinationPickerRows, setDestinationPickerRows] = useState(null);
@@ -832,21 +835,78 @@ export default function StockInPage() {
     if (!showTemplateFilters) return;
     setLoadingTemplateOptions(true);
     Promise.all([
-      fetchCatalogOptions("/api/catalog/brands?pageSize=1000").catch(() => []),
+      fetch("/api/vendors?pageSize=1000")
+        .then((r) => r.json())
+        .catch(() => []),
       fetchCatalogOptions("/api/catalog/categories?pageSize=1000").catch(
         () => [],
       ),
     ])
-      .then(([brands, categories]) => {
-        setTemplateBrands(brands);
+      .then(([vendorData, categories]) => {
+        setVendors(Array.isArray(vendorData) ? vendorData : []);
+        setTemplateBrands([]);
         setTemplateCategories(categories);
       })
       .catch(() => {
+        setVendors([]);
         setTemplateBrands([]);
         setTemplateCategories([]);
       })
       .finally(() => setLoadingTemplateOptions(false));
   }, [showTemplateFilters]);
+
+  useEffect(() => {
+    if (!showTemplateFilters || !templateFilters.vendorId) {
+      setTemplateBrands([]);
+      setTemplateFilters((current) =>
+        current.brandIds.length ? { ...current, brandIds: [] } : current,
+      );
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoadingTemplateOptions(true);
+    const params = new URLSearchParams({
+      template: "products",
+      vendor_ids: templateFilters.vendorId,
+    });
+    fetch(`/api/inventory/stockin?${params.toString()}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then((res) => res.json())
+      .then((json) => {
+        const records = Array.isArray(json.records) ? json.records : [];
+        const brands = [
+          ...new Map(
+            records
+              .map((product) => [
+                String(product.brandId || product.brand || "").trim(),
+                {
+                  id: String(product.brandId || "").trim(),
+                  name: String(product.brand || "").trim(),
+                },
+              ])
+              .filter(([key, value]) => key && value.name),
+          ).values(),
+        ].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+        setTemplateBrands(brands);
+        setTemplateFilters((current) => ({
+          ...current,
+          brandIds: current.brandIds.filter((brandId) =>
+            brands.some((brand) => String(brand.id) === String(brandId)),
+          ),
+        }));
+      })
+      .catch((error) => {
+        if (error?.name !== "AbortError") setTemplateBrands([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingTemplateOptions(false);
+      });
+
+    return () => controller.abort();
+  }, [showTemplateFilters, templateFilters.vendorId]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -878,6 +938,31 @@ export default function StockInPage() {
     setSelectedFile(null);
     setPurchaseOrderId("");
     setInvoiceNumber("");
+  };
+
+  const openBulkPreview = (rows) => {
+    const selectedMap = Object.fromEntries(
+      rows.map((row) => [row.preview_id, true]),
+    );
+    setBulkPreviewRows(rows);
+    setBulkPreviewSelected(selectedMap);
+  };
+
+  const closeBulkPreview = () => {
+    setBulkPreviewRows([]);
+    setBulkPreviewSelected({});
+  };
+
+  const confirmBulkPreview = async () => {
+    const selectedRows = bulkPreviewRows.filter(
+      (row) => bulkPreviewSelected[row.preview_id],
+    );
+    if (!selectedRows.length) {
+      alert("Please select at least one product to add.");
+      return;
+    }
+    closeBulkPreview();
+    await processBulkRows(selectedRows);
   };
 
   // ── UPDATED: replaced window.prompt with modal ──
@@ -935,9 +1020,6 @@ export default function StockInPage() {
       .finally(() => setLoadingList(false));
 
     window.sessionStorage.removeItem(PENDING_STOCK_IN_BULK_KEY);
-    alert(
-      `Bulk stock draft ready: ${selectedRows.length} product(s) added. Please review and confirm.`,
-    );
     router.push(
       `/inventory/stockin/line-items?id=${encodeURIComponent(draft.id)}`,
     );
@@ -975,7 +1057,7 @@ export default function StockInPage() {
       : [];
 
     const selectedRows = rows
-      .map((row) => {
+      .map((row, index) => {
         const productId = getBulkField(row, ["product_id"]);
         const productName = getBulkField(row, ["product_name", "name"]);
         const barcode = getBulkField(row, ["barcode"]);
@@ -1015,7 +1097,10 @@ export default function StockInPage() {
           ]) || "";
 
         return {
+          preview_id: `${matchedProduct.id}-${index}`,
           product_id: matchedProduct.id,
+          product_name: matchedProduct.productName || productName || "",
+          sku: matchedProduct.sku || sku || matchedProduct.barcode || "",
           qty,
           cost_price:
             Number(
@@ -1052,7 +1137,7 @@ export default function StockInPage() {
       return;
     }
 
-    await processBulkRows(selectedRows);
+    openBulkPreview(selectedRows);
   };
 
   const handleBulkImport = async () => {
@@ -1080,11 +1165,19 @@ export default function StockInPage() {
   };
 
   const handleDownloadBulkTemplate = async () => {
+    if (!templateFilters.vendorId) {
+      alert("Please select a vendor first.");
+      return;
+    }
     setDownloadingTemplate(true);
     try {
       const params = new URLSearchParams({ template: "products" });
-      if (templateFilters.brandId)
-        params.set("brand_id", templateFilters.brandId);
+      if (templateFilters.vendorId) {
+        params.set("vendor_ids", templateFilters.vendorId);
+      }
+      if (templateFilters.brandIds.length) {
+        params.set("brand_ids", templateFilters.brandIds.join(","));
+      }
       if (templateFilters.categoryId) {
         params.set("category_id", templateFilters.categoryId);
       }
@@ -1414,6 +1507,133 @@ export default function StockInPage() {
         />
       )}
 
+      {bulkPreviewRows.length > 0 && (
+        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/40 px-4">
+          <div className="flex max-h-[82vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Review Products To Add
+                </h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  Select only the products that should be added to this stock in.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeBulkPreview}
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
+                title="Cancel"
+              >
+                <i className="ti ti-x text-[18px]" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-gray-50 text-xs uppercase text-gray-500">
+                  <tr>
+                    <th className="w-16 px-4 py-3 text-left">
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={
+                            bulkPreviewRows.length > 0 &&
+                            bulkPreviewRows.every(
+                              (row) => bulkPreviewSelected[row.preview_id],
+                            )
+                          }
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setBulkPreviewSelected(
+                              Object.fromEntries(
+                                bulkPreviewRows.map((row) => [
+                                  row.preview_id,
+                                  checked,
+                                ]),
+                              ),
+                            );
+                          }}
+                          className="h-4 w-4 rounded border-gray-300"
+                        />
+                        <span>S.No</span>
+                      </label>
+                    </th>
+                    <th className="px-4 py-3 text-left">Product</th>
+                    <th className="px-4 py-3 text-left">SKU</th>
+                    <th className="px-4 py-3 text-right">Qty</th>
+                    <th className="px-4 py-3 text-right">Cost</th>
+                    <th className="px-4 py-3 text-left">Expiry</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {bulkPreviewRows.map((row, index) => (
+                    <tr
+                      key={row.preview_id}
+                      className={
+                        bulkPreviewSelected[row.preview_id]
+                          ? "bg-white"
+                          : "bg-gray-50 text-gray-400"
+                      }
+                    >
+                      <td className="px-4 py-3">
+                        <label className="inline-flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={!!bulkPreviewSelected[row.preview_id]}
+                            onChange={(event) =>
+                              setBulkPreviewSelected((current) => ({
+                                ...current,
+                                [row.preview_id]: event.target.checked,
+                              }))
+                            }
+                            className="h-4 w-4 rounded border-gray-300"
+                          />
+                          <span>{index + 1}</span>
+                        </label>
+                      </td>
+                      <td className="px-4 py-3 font-medium text-gray-900">
+                        {row.product_name || row.name || `Product ${row.product_id}`}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {row.sku || "—"}
+                      </td>
+                      <td className="px-4 py-3 text-right">{row.qty}</td>
+                      <td className="px-4 py-3 text-right">
+                        {formatCost(row.cost_price)}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {formatDate(row.expiry_date)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between border-t border-gray-200 px-6 py-4">
+              <span className="text-sm text-gray-600">
+                {bulkPreviewRows.filter((row) => bulkPreviewSelected[row.preview_id]).length} of {bulkPreviewRows.length} selected
+              </span>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={closeBulkPreview}
+                  className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmBulkPreview}
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showTemplateFilters && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-6">
           <div
@@ -1429,26 +1649,95 @@ export default function StockInPage() {
             <div className="space-y-4 p-6">
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-800">
-                  Brand
+                  Vendor
                 </label>
                 <select
-                  value={templateFilters.brandId}
+                  value={templateFilters.vendorId}
                   onChange={(event) =>
                     setTemplateFilters((current) => ({
                       ...current,
-                      brandId: event.target.value,
+                      vendorId: event.target.value,
+                      brandIds: [],
                     }))
                   }
                   disabled={loadingTemplateOptions || downloadingTemplate}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus:border-red-300 focus:ring-1 focus:ring-red-200"
                 >
-                  <option value="">All Brands</option>
-                  {templateBrands.map((brand) => (
-                    <option key={brand.id} value={brand.id}>
-                      {brand.name}
+                  <option value="">Select Vendor</option>
+                  {vendors.map((vendor) => (
+                    <option key={vendor.id} value={String(vendor.id)}>
+                      {vendor.name}
+                      {vendor.company ? ` - ${vendor.company}` : ""}
                     </option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <label className="block text-sm font-medium text-gray-800">
+                    Brands
+                  </label>
+                  {templateBrands.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTemplateFilters((current) => ({
+                          ...current,
+                          brandIds:
+                            current.brandIds.length === templateBrands.length
+                              ? []
+                              : templateBrands.map((brand) => String(brand.id)),
+                        }))
+                      }
+                      className="text-xs font-semibold text-red-600 hover:underline"
+                    >
+                      {templateFilters.brandIds.length === templateBrands.length
+                        ? "Clear all"
+                        : "Select all"}
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 p-3">
+                  {!templateFilters.vendorId ? (
+                    <p className="text-sm text-gray-500">
+                      Select vendor to load brands.
+                    </p>
+                  ) : loadingTemplateOptions ? (
+                    <p className="text-sm text-gray-500">Loading brands...</p>
+                  ) : templateBrands.length ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {templateBrands.map((brand) => (
+                        <label
+                          key={brand.id}
+                          className="inline-flex items-center gap-2 text-sm text-gray-700"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={templateFilters.brandIds.includes(
+                              String(brand.id),
+                            )}
+                            onChange={(event) =>
+                              setTemplateFilters((current) => ({
+                                ...current,
+                                brandIds: event.target.checked
+                                  ? [...current.brandIds, String(brand.id)]
+                                  : current.brandIds.filter(
+                                      (id) => id !== String(brand.id),
+                                    ),
+                              }))
+                            }
+                            className="h-4 w-4 rounded border-gray-300"
+                          />
+                          <span>{brand.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">
+                      No brands found for selected vendor.
+                    </p>
+                  )}
+                </div>
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-800">

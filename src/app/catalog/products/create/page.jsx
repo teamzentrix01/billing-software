@@ -42,6 +42,7 @@ const initialForm = {
   inventory_store_id: '',
   opening_stock_qty: '',
   default_low_stock_value: '',
+  minimum_base_quantity: '',
   disable_billing_on_zero: true,
   disable_sales_on_expiry: false,
   inventory_method: 'direct',
@@ -49,9 +50,9 @@ const initialForm = {
   image_url: '',
 };
 
-const UNIT_OPTIONS = ['PCS', 'KG', 'LTR'];
+const UNIT_OPTIONS = ['PCS', 'KG', 'GRAMS', 'LTR'];
 
-const createEmptyStoreRow = () => ({ enabled: true, selling_price: '', mrp: '', low_stock_value: '' });
+const createEmptyStoreRow = () => ({ enabled: true, selling_price: '', mrp: '', low_stock_value: '', minimum_base_quantity: '' });
 
 function Card({ title, description, children, action }) {
   return (
@@ -154,6 +155,7 @@ export default function CreateProductPage() {
       const unit = String(value || '').trim().toUpperCase();
       if (unit === 'PIECE' || unit === 'PCS') return 'PCS';
       if (unit === 'KG') return 'KG';
+      if (unit === 'G' || unit === 'GM' || unit === 'GRAM' || unit === 'GRAMS') return 'GRAMS';
       if (unit === 'LTR' || unit === 'LITER' || unit === 'LITRE') return 'LTR';
       return 'PCS';
     };
@@ -282,6 +284,7 @@ export default function CreateProductPage() {
           inventory_store_id: form.inventory_store_id || null,
           opening_stock_qty: Number(form.opening_stock_qty || 0),
           default_low_stock_value: Number(form.default_low_stock_value || 0),
+          minimum_base_quantity: Number(form.minimum_base_quantity || 0),
           disable_billing_on_zero: form.disable_billing_on_zero,
           disable_sales_on_expiry: form.disable_sales_on_expiry,
           inventory_method: form.inventory_method,
@@ -309,6 +312,7 @@ export default function CreateProductPage() {
             selling_price: Number(row.selling_price || form.selling_price || 0),
             mrp: Number(row.mrp || form.mrp || 0),
             low_stock_value: Number(row.low_stock_value || form.default_low_stock_value || 0),
+            minimum_base_quantity: Number(row.minimum_base_quantity || form.minimum_base_quantity || 0),
           }),
         })));
       }
@@ -469,6 +473,7 @@ export default function CreateProductPage() {
               <select value={form.unit} onChange={(event) => set('unit', event.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-blue-500">
                 {UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
               </select>
+              <p className="mt-1 text-xs text-gray-500">For weighted items like 650gm apple, select KG and use MBQ 0.65.</p>
             </div>
             <div className="flex flex-wrap items-center gap-4 pt-6">
               {[
@@ -573,13 +578,14 @@ export default function CreateProductPage() {
                     <th className="px-4 py-3 text-left">Enable</th>
                     <th className="px-4 py-3 text-left">Selling Price</th>
                     <th className="px-4 py-3 text-left">M.R.P.</th>
-                    <th className="px-4 py-3 text-left">Low Stock Value</th>
+                    <th className="px-4 py-3 text-left">Low Stock Qty</th>
+                    <th className="px-4 py-3 text-left">MBQ</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
                   {stores.length === 0 ? (
                     <tr>
-                      <td colSpan="5" className="px-4 py-8 text-center text-gray-400">No stores available</td>
+                      <td colSpan="6" className="px-4 py-8 text-center text-gray-400">No stores available</td>
                     </tr>
                   ) : stores.map((store) => {
                     const row = storeRows[store.id] || createEmptyStoreRow();
@@ -589,7 +595,8 @@ export default function CreateProductPage() {
                         <td className="px-4 py-3"><input type="checkbox" checked={row.enabled} onChange={() => toggleStore(store.id)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" /></td>
                         <td className="px-4 py-3"><input type="number" value={row.selling_price} onChange={(event) => updateStoreRow(store.id, 'selling_price', event.target.value)} disabled={!row.enabled} className="w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none disabled:bg-gray-100" /></td>
                         <td className="px-4 py-3"><input type="number" value={row.mrp} onChange={(event) => updateStoreRow(store.id, 'mrp', event.target.value)} disabled={!row.enabled} className="w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none disabled:bg-gray-100" /></td>
-                        <td className="px-4 py-3"><input type="number" value={row.low_stock_value} onChange={(event) => updateStoreRow(store.id, 'low_stock_value', event.target.value)} disabled={!row.enabled} className="w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none disabled:bg-gray-100" /></td>
+                        <td className="px-4 py-3"><input type="number" min="0" step="0.001" value={row.low_stock_value} onChange={(event) => updateStoreRow(store.id, 'low_stock_value', event.target.value)} disabled={!row.enabled} className="w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none disabled:bg-gray-100" /></td>
+                        <td className="px-4 py-3"><input type="number" min="0" step="0.001" value={row.minimum_base_quantity} onChange={(event) => updateStoreRow(store.id, 'minimum_base_quantity', event.target.value)} disabled={!row.enabled} className="w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none disabled:bg-gray-100" /></td>
                       </tr>
                     );
                   })}
@@ -619,7 +626,7 @@ export default function CreateProductPage() {
 
             {form.manage_inventory_enabled && (
               <>
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-4">
                   <div>
                     <Label>Opening Stock Store</Label>
                     <SearchableSelect
@@ -635,18 +642,31 @@ export default function CreateProductPage() {
                     <input
                       type="number"
                       min="0"
+                      step="0.001"
                       value={form.opening_stock_qty}
                       onChange={(event) => set('opening_stock_qty', event.target.value)}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-blue-500"
                     />
                   </div>
                   <div>
-                    <Label>Default Low Stock Value</Label>
+                    <Label>Low Stock Qty</Label>
                     <input
                       type="number"
                       min="0"
+                      step="0.001"
                       value={form.default_low_stock_value}
                       onChange={(event) => set('default_low_stock_value', event.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <Label>MBQ</Label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      value={form.minimum_base_quantity}
+                      onChange={(event) => set('minimum_base_quantity', event.target.value)}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-blue-500"
                     />
                   </div>

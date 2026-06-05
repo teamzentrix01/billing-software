@@ -502,6 +502,16 @@ function LineItemsContent() {
           </div>
 
           <div className="mb-4">
+            <label className="block text-[12px] text-gray-500 mb-1">Reference Transaction Type</label>
+            <p className="text-[13px] font-semibold text-gray-900">{draft?.referenceType || 'stock_in'}</p>
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-[12px] text-gray-500 mb-1">Reference ID</label>
+            <p className="text-[13px] font-semibold text-gray-900">{draft?.referenceId || draft?.transactionId || (id ? `STK-${String(id).padStart(4, '0')}` : '—')}</p>
+          </div>
+
+          <div className="mb-4">
             <label className="block text-[12px] text-gray-500 mb-1">Vendor Name</label>
             {sourceType === 'vendor' ? (
               <select
