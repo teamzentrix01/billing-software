@@ -1,4 +1,5 @@
 import { query } from '@/lib/db';
+import { toDateInputValue } from '@/lib/dateUtils';
 
 const BATCH_SCHEMA_VERSION = 2;
 const globalForInventoryBatching = globalThis;
@@ -9,24 +10,7 @@ function toNumber(value, fallback = 0) {
 }
 
 function normalizeDate(value) {
-  if (!value) return null;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-  }
-  if (value instanceof Date) {
-    if (Number.isNaN(value.getTime())) return null;
-    const year = value.getFullYear();
-    const month = String(value.getMonth() + 1).padStart(2, '0');
-    const day = String(value.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return toDateInputValue(value) || null;
 }
 
 function buildBatchNumber({ stockInId, productId, batchNo }) {

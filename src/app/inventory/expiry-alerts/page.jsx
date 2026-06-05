@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import InventoryShell from '@/components/inventory/InventoryShell';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 const tableHeaders = [
   'Priority',
@@ -27,10 +28,7 @@ const statusOptions = [
 ];
 
 function formatDate(value) {
-  if (!value) return '-';
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatIndianDate(value, '-');
 }
 
 function formatQty(value) {
