@@ -620,6 +620,128 @@ function findStockInTemplateProductMatch(
   return null;
 }
 
+// ─── Destination Picker Modal ────────────────────────────────────────────────
+function DestinationPickerModal({ stores, onConfirm, onCancel }) {
+  const [selectedId, setSelectedId] = useState("");
+  const [search, setSearch] = useState("");
+
+  const filteredStores = stores.filter((store) =>
+    `${store.name || ""} ${store.id || ""}`
+      .toLowerCase()
+      .includes(search.trim().toLowerCase()),
+  );
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200">
+          <h2 className="text-[17px] font-bold text-gray-900">
+            Select Destination
+          </h2>
+          <p className="mt-1 text-[13px] text-gray-500">
+            Choose the store or warehouse for this bulk stock in.
+          </p>
+        </div>
+
+        <div className="px-6 pt-4 pb-2">
+          <input
+            autoFocus
+            type="text"
+            placeholder="Search store or warehouse..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-200"
+          />
+        </div>
+
+        <div className="px-6 pb-2 max-h-60 overflow-y-auto">
+          {filteredStores.length === 0 ? (
+            <p className="py-4 text-center text-sm text-gray-400">
+              No stores found.
+            </p>
+          ) : (
+            <div className="space-y-1 py-1">
+              {filteredStores.map((store) => {
+                const locationType = getLocationType(store);
+                const isWarehouse = locationType === "warehouse";
+                const isSelected = String(store.id) === String(selectedId);
+                return (
+                  <button
+                    key={store.id}
+                    type="button"
+                    onClick={() => setSelectedId(String(store.id))}
+                    className={`w-full flex items-center justify-between rounded-lg px-3 py-2.5 text-left transition-colors ${
+                      isSelected
+                        ? "bg-blue-50 border border-blue-300"
+                        : "border border-transparent hover:bg-gray-50"
+                    }`}
+                  >
+                    <div>
+                      <span className="block text-sm font-medium text-gray-800">
+                        {store.name}
+                      </span>
+                      <span className="block text-[11px] text-gray-400">
+                        ID: {store.id}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {locationType && (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                            isWarehouse
+                              ? "bg-purple-100 text-purple-700"
+                              : "bg-green-100 text-green-700"
+                          }`}
+                        >
+                          {isWarehouse ? "Warehouse" : locationType || "Store"}
+                        </span>
+                      )}
+                      {isSelected && (
+                        <svg
+                          className="h-4 w-4 text-blue-600"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={2.5}
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M5 13l4 4L19 7"
+                          />
+                        </svg>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-xl border border-gray-200 px-4 py-2.5 text-[13px] font-semibold text-gray-700 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!selectedId}
+            onClick={() => onConfirm(selectedId)}
+            className="rounded-xl bg-blue-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function StockInPage() {
   const [showModal, setShowModal] = useState(false);
   const [stores, setStores] = useState([]);
@@ -654,6 +776,12 @@ export default function StockInPage() {
     source: "",
   });
   const [pendingMissingProduct, setPendingMissingProduct] = useState(null);
+
+  // ── NEW: state for destination picker modal (bulk import flow) ──
+  const [destinationPickerRows, setDestinationPickerRows] = useState(null);
+  const [destinationPickerStores, setDestinationPickerStores] = useState([]);
+  const [showDestinationPicker, setShowDestinationPicker] = useState(false);
+
   const fileInputRef = useRef(null);
   const router = useRouter();
   const destinationStores =
@@ -757,7 +885,8 @@ export default function StockInPage() {
     setInvoiceNumber("");
   };
 
-  const processBulkRows = async (selectedRows) => {
+  // ── UPDATED: replaced window.prompt with modal ──
+  const processBulkRows = async (selectedRows, destinationId) => {
     if (!selectedRows.length) {
       alert(
         "Please enter a quantity for the products you want to add, then upload the template again.",
@@ -765,17 +894,18 @@ export default function StockInPage() {
       return;
     }
 
-    const storeData = stores.length
-      ? stores
-      : await fetchStores().catch(() => []);
-    const destinationId = window.prompt(
-      `Enter destination Store/Warehouse ID for this Stock In:\n${storeData
-        .slice(0, 20)
-        .map((store) => `${store.id} - ${store.name}`)
-        .join("\n")}`,
-    );
-    if (!destinationId) return;
+    // If no destinationId yet, load stores and open the picker modal
+    if (!destinationId) {
+      const storeData = stores.length
+        ? stores
+        : await fetchStores().catch(() => []);
+      setDestinationPickerStores(Array.isArray(storeData) ? storeData : []);
+      setDestinationPickerRows(selectedRows);
+      setShowDestinationPicker(true);
+      return;
+    }
 
+    // Proceed with confirmed destinationId
     const draft = await postStockIn({
       method: "new",
       destination: String(destinationId).trim(),
@@ -816,6 +946,19 @@ export default function StockInPage() {
     router.push(
       `/inventory/stockin/line-items?id=${encodeURIComponent(draft.id)}`,
     );
+  };
+
+  // Handler when user confirms destination in the picker modal
+  const handleDestinationPickerConfirm = async (destinationId) => {
+    setShowDestinationPicker(false);
+    const rows = destinationPickerRows;
+    setDestinationPickerRows(null);
+    await processBulkRows(rows, destinationId);
+  };
+
+  const handleDestinationPickerCancel = () => {
+    setShowDestinationPicker(false);
+    setDestinationPickerRows(null);
   };
 
   const handleParsedBulkRows = async (
@@ -1254,6 +1397,15 @@ export default function StockInPage() {
         tableData={loadingList ? [] : tableData}
         emptyMessage={loadingList ? "Loading records…" : "No Records Found"}
       />
+
+      {/* ── Destination Picker Modal (bulk import flow) ── */}
+      {showDestinationPicker && (
+        <DestinationPickerModal
+          stores={destinationPickerStores}
+          onConfirm={handleDestinationPickerConfirm}
+          onCancel={handleDestinationPickerCancel}
+        />
+      )}
 
       {showTemplateFilters && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-6">
