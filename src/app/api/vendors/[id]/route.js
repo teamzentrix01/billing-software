@@ -21,9 +21,32 @@ function mapVendor(r) {
     gst_number: r.gst_number,
     margin: Number(r.margin || 0),
     is_active: r.is_active !== false,
+    brand_ids: Array.isArray(r.brand_ids)
+      ? r.brand_ids.map((brandId) => String(brandId))
+      : [],
+    brands: Array.isArray(r.brands) ? r.brands.filter(Boolean) : [],
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
+}
+
+function normalizeBrandIds(value) {
+  return [...new Set((Array.isArray(value) ? value : [])
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0))];
+}
+
+async function saveVendorBrands(vendorId, brandIds) {
+  await query('DELETE FROM vendor_brands WHERE vendor_id = $1', [vendorId]);
+  if (!brandIds.length) return;
+  await query(
+    `INSERT INTO vendor_brands (vendor_id, brand_id)
+     SELECT $1, id
+     FROM brands
+     WHERE id = ANY($2::int[])
+     ON CONFLICT DO NOTHING`,
+    [vendorId, brandIds],
+  );
 }
 
 function normalizePayload(body) {
@@ -52,6 +75,7 @@ function normalizePayload(body) {
     gst_number: String(body.gst_number).trim(),
     margin: Number(body.margin || 0),
     is_active: body.is_active !== false,
+    brand_ids: normalizeBrandIds(body.brand_ids),
   };
 }
 
@@ -64,10 +88,15 @@ export async function GET(request, context) {
     if (permissionCheck.error) return permissionCheck.error;
     const { id } = await context.params;
     const res = await query(
-          `SELECT id, name, company, business, address_1, address_2, city, state, pincode, country,
-            email, mobile_number, gst_number, margin, is_active, created_at, updated_at
-       FROM vendors
-       WHERE id = $1`,
+          `SELECT v.id, v.name, v.company, v.business, v.address_1, v.address_2, v.city, v.state, v.pincode, v.country,
+            v.email, v.mobile_number, v.gst_number, v.margin, v.is_active, v.created_at, v.updated_at,
+            COALESCE(ARRAY_AGG(b.id ORDER BY b.name) FILTER (WHERE b.id IS NOT NULL), '{}') AS brand_ids,
+            COALESCE(ARRAY_AGG(b.name ORDER BY b.name) FILTER (WHERE b.id IS NOT NULL), '{}') AS brands
+       FROM vendors v
+       LEFT JOIN vendor_brands vb ON vb.vendor_id = v.id
+       LEFT JOIN brands b ON b.id = vb.brand_id
+       WHERE v.id = $1
+       GROUP BY v.id`,
       [id]
     );
     if (!res.rows[0]) return NextResponse.json({ error: 'Vendor not found' }, { status: 404 });
@@ -126,7 +155,8 @@ export async function PUT(request, context) {
       ]
     );
     if (!res.rows[0]) return NextResponse.json({ error: 'Vendor not found' }, { status: 404 });
-    return NextResponse.json(mapVendor(res.rows[0]));
+    await saveVendorBrands(id, payload.brand_ids);
+    return NextResponse.json(mapVendor({ ...res.rows[0], brand_ids: payload.brand_ids }));
   } catch (err) {
     console.error('[vendors PUT id]', err.message);
     if (err.code === '23505') {

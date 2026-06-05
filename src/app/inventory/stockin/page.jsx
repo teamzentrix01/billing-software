@@ -838,13 +838,27 @@ export default function StockInPage() {
       fetch("/api/vendors?pageSize=1000")
         .then((r) => r.json())
         .catch(() => []),
+      fetchCatalogOptions("/api/catalog/brands?pageSize=1000").catch(
+        () => [],
+      ),
       fetchCatalogOptions("/api/catalog/categories?pageSize=1000").catch(
         () => [],
       ),
     ])
-      .then(([vendorData, categories]) => {
+      .then(([vendorData, brands, categories]) => {
         setVendors(Array.isArray(vendorData) ? vendorData : []);
-        setTemplateBrands([]);
+        setTemplateBrands(
+          brands
+            .filter((brand) => brand?.is_active !== false)
+            .map((brand) => ({
+              id: String(brand.id || "").trim(),
+              name: String(brand.name || "").trim(),
+            }))
+            .filter((brand) => brand.id && brand.name)
+            .sort((a, b) =>
+              a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+            ),
+        );
         setTemplateCategories(categories);
       })
       .catch(() => {
@@ -854,59 +868,6 @@ export default function StockInPage() {
       })
       .finally(() => setLoadingTemplateOptions(false));
   }, [showTemplateFilters]);
-
-  useEffect(() => {
-    if (!showTemplateFilters || !templateFilters.vendorId) {
-      setTemplateBrands([]);
-      setTemplateFilters((current) =>
-        current.brandIds.length ? { ...current, brandIds: [] } : current,
-      );
-      return;
-    }
-
-    const controller = new AbortController();
-    setLoadingTemplateOptions(true);
-    const params = new URLSearchParams({
-      template: "products",
-      vendor_ids: templateFilters.vendorId,
-    });
-    fetch(`/api/inventory/stockin?${params.toString()}`, {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then((res) => res.json())
-      .then((json) => {
-        const records = Array.isArray(json.records) ? json.records : [];
-        const brands = [
-          ...new Map(
-            records
-              .map((product) => [
-                String(product.brandId || product.brand || "").trim(),
-                {
-                  id: String(product.brandId || "").trim(),
-                  name: String(product.brand || "").trim(),
-                },
-              ])
-              .filter(([key, value]) => key && value.name),
-          ).values(),
-        ].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-        setTemplateBrands(brands);
-        setTemplateFilters((current) => ({
-          ...current,
-          brandIds: current.brandIds.filter((brandId) =>
-            brands.some((brand) => String(brand.id) === String(brandId)),
-          ),
-        }));
-      })
-      .catch((error) => {
-        if (error?.name !== "AbortError") setTemplateBrands([]);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoadingTemplateOptions(false);
-      });
-
-    return () => controller.abort();
-  }, [showTemplateFilters, templateFilters.vendorId]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1170,12 +1131,13 @@ export default function StockInPage() {
       alert("Please select a vendor first.");
       return;
     }
+    if (!templateFilters.brandIds.length) {
+      alert("Please select at least one brand.");
+      return;
+    }
     setDownloadingTemplate(true);
     try {
       const params = new URLSearchParams({ template: "products" });
-      if (templateFilters.vendorId) {
-        params.set("vendor_ids", templateFilters.vendorId);
-      }
       if (templateFilters.brandIds.length) {
         params.set("brand_ids", templateFilters.brandIds.join(","));
       }
@@ -1701,7 +1663,7 @@ export default function StockInPage() {
                 <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 p-3">
                   {!templateFilters.vendorId ? (
                     <p className="text-sm text-gray-500">
-                      Select vendor to load brands.
+                      Select vendor first.
                     </p>
                   ) : loadingTemplateOptions ? (
                     <p className="text-sm text-gray-500">Loading brands...</p>
@@ -1735,7 +1697,7 @@ export default function StockInPage() {
                     </div>
                   ) : (
                     <p className="text-sm text-gray-500">
-                      No brands found for selected vendor.
+                      No brands found.
                     </p>
                   )}
                 </div>
