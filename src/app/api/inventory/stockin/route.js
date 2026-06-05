@@ -43,52 +43,60 @@ export async function GET(request) {
         .map((id) => Number(id))
         .filter(Number.isFinite);
       const categoryId = String(searchParams.get("category_id") || "").trim();
-      const vendorIds = String(searchParams.get("vendor_ids") || searchParams.get("vendor_id") || "")
-        .split(",")
-        .map((id) => Number(id))
-        .filter(Number.isFinite);
+
+      let selectedBrandNames = [];
+      let selectedCategoryName = "";
+      if (brandIds.length) {
+        const brandNamesRes = await query(
+          `SELECT name FROM brands WHERE id = ANY($1::int[])`,
+          [brandIds],
+        ).catch(() => ({ rows: [] }));
+        selectedBrandNames = brandNamesRes.rows
+          .map((row) => String(row.name || "").trim().toLowerCase())
+          .filter(Boolean);
+      }
+      if (categoryId) {
+        const categoryNameRes = await query(
+          `SELECT name FROM categories WHERE id = $1 LIMIT 1`,
+          [Number(categoryId)],
+        ).catch(() => ({ rows: [] }));
+        selectedCategoryName = String(categoryNameRes.rows[0]?.name || "")
+          .trim()
+          .toLowerCase();
+      }
 
       if (brandIds.length) {
         templateParams.push(brandIds);
-        templateWhere.push(`p.brand_id = ANY($${templateParams.length}::int[])`);
+        const brandIdParam = templateParams.length;
+        if (selectedBrandNames.length) {
+          templateParams.push(selectedBrandNames);
+          templateWhere.push(`(
+            p.brand_id = ANY($${brandIdParam}::int[])
+            OR LOWER(COALESCE(b.name, '')) = ANY($${templateParams.length}::text[])
+          )`);
+        } else {
+          templateWhere.push(`p.brand_id = ANY($${brandIdParam}::int[])`);
+        }
       } else if (brandId) {
         templateParams.push(Number(brandId));
         templateWhere.push(`p.brand_id = $${templateParams.length}`);
       }
       if (categoryId) {
         templateParams.push(Number(categoryId));
-        templateWhere.push(`p.category_id = $${templateParams.length}`);
+        const categoryIdParam = templateParams.length;
+        if (selectedCategoryName) {
+          templateParams.push(selectedCategoryName);
+          templateWhere.push(`(
+            p.category_id = $${categoryIdParam}
+            OR LOWER(COALESCE(c.name, '')) = $${templateParams.length}
+          )`);
+        } else {
+          templateWhere.push(`p.category_id = $${categoryIdParam}`);
+        }
       }
-      if (vendorIds.length) {
-        templateParams.push(vendorIds);
-        templateWhere.push(`(
-          EXISTS (
-            SELECT 1
-            FROM vendor_brands vb_vendor
-            WHERE vb_vendor.vendor_id = ANY($${templateParams.length}::int[])
-              AND vb_vendor.brand_id = p.brand_id
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM stock_in si_vendor
-            JOIN stock_in_items sii_vendor ON sii_vendor.stock_in_id = si_vendor.id
-            WHERE sii_vendor.product_id = p.id
-              AND (
-                si_vendor.vendor_id = ANY($${templateParams.length}::int[])
-                OR EXISTS (
-                  SELECT 1
-                  FROM vendors selected_vendor
-                  WHERE selected_vendor.id = ANY($${templateParams.length}::int[])
-                    AND LOWER(selected_vendor.name) = LOWER(COALESCE(si_vendor.vendor_name, ''))
-                )
-              )
-            )
-          )
-        )`);
-      }
-
-      const productsRes = await query(
-        `SELECT
+      const selectTemplateProducts = (whereParts, params) =>
+        query(
+          `SELECT
            p.id,
            p.product_id,
            p.name,
@@ -105,11 +113,27 @@ export async function GET(request) {
          FROM products p
          LEFT JOIN categories c ON c.id = p.category_id
          LEFT JOIN brands b ON b.id = p.brand_id
-         WHERE ${templateWhere.join(" AND ")}
+         WHERE ${whereParts.join(" AND ")}
          ORDER BY p.id ASC
          LIMIT 10000`,
+          params,
+        );
+
+      let productsRes = await selectTemplateProducts(
+        templateWhere,
         templateParams,
       );
+      if (
+        !productsRes.rows.length &&
+        categoryId &&
+        brandIds.length
+      ) {
+        const fallbackWhere = templateWhere.filter(
+          (part) => !part.includes("p.category_id"),
+        );
+        const fallbackParams = templateParams.slice(0, selectedBrandNames.length ? 2 : 1);
+        productsRes = await selectTemplateProducts(fallbackWhere, fallbackParams);
+      }
 
       return NextResponse.json({
         records: productsRes.rows.map((row) => ({

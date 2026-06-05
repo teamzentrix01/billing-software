@@ -1150,7 +1150,7 @@ export default function StockInPage() {
       const json = await res.json();
       const records = Array.isArray(json.records) ? json.records : [];
       if (!records.length) {
-        alert("No products found for the selected vendor, brand or category.");
+        alert("No products found for the selected brand or category.");
         return;
       }
       const productRows = records.map((product) => ({
