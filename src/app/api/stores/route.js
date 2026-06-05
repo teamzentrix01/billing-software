@@ -160,7 +160,15 @@ export async function POST(request) {
     const managerEmail = String(body.managerEmail || "")
       .trim()
       .toLowerCase();
-    if (managerMobile && !/^\d{10}$/.test(managerMobile)) {
+    if (!managerMobile) {
+      return validationError([
+        {
+          field: "managerMobile",
+          message: "Mobile number is required",
+        },
+      ]);
+    }
+    if (!/^\d{10}$/.test(managerMobile)) {
       return validationError([
         {
           field: "managerMobile",
@@ -171,6 +179,11 @@ export async function POST(request) {
     if (managerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(managerEmail)) {
       return validationError([
         { field: "managerEmail", message: "Enter a valid e-mail address" },
+      ]);
+    }
+    if (!String(body.gstNumber || "").trim()) {
+      return validationError([
+        { field: "gstNumber", message: "GST number is required" },
       ]);
     }
 

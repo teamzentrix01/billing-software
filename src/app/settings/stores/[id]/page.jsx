@@ -169,8 +169,6 @@ export default function StoreDetailsPage() {
                 ["Pincode", store.pincode],
                 ["Country", store.country],
                 ["Location Type", store.meta?.locationType],
-                ["Latitude", store.meta?.latitude],
-                ["Longitude", store.meta?.longitude],
                 ["Pan Number", store.meta?.panNumber],
               ]}
             />
@@ -189,7 +187,6 @@ export default function StoreDetailsPage() {
                 ["Closing Time", store.closing_time],
                 ["Users", store.meta?.users],
                 ["Store Capacity", store.meta?.storeCapacity],
-                ["Default Customer Group", store.meta?.defaultCustomerGroup],
                 [
                   "Store Area",
                   store.meta?.storeAreaSqFt
@@ -243,12 +240,8 @@ export default function StoreDetailsPage() {
                 ["Aadhaar", documentName(store.meta?.documents?.aadhaar)],
                 ["PAN Card", documentName(store.meta?.documents?.panCard)],
                 [
-                  "Rent Agreement",
+                  "Electricity Bill / Rent Agreement",
                   documentName(store.meta?.documents?.rentAgreement),
-                ],
-                [
-                  "Registry Copy",
-                  documentName(store.meta?.documents?.registryCopy),
                 ],
               ]}
             />

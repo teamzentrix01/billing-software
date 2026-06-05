@@ -140,7 +140,7 @@ export default function Page() {
         description="Branches, addresses, GST registration per store. Need Help?"
         createLabel="Create"
         onCreateClick={() => router.push('/settings/stores/create')}
-        bulkOperations={true}
+        bulkOperations={false}
         columns={columns}
         rows={stores}
         loading={loading}

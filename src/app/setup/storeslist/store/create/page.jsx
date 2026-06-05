@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import MainLayout from "@/components/MainLayout";
 
@@ -10,8 +10,7 @@ const DOCUMENT_FIELDS = [
   { key: "agreement", label: "Agreement", required: true },
   { key: "aadhaar", label: "Aadhaar", required: true },
   { key: "panCard", label: "PAN Card", required: true },
-  { key: "rentAgreement", label: "Rent Agreement", required: false },
-  { key: "registryCopy", label: "Registry Copy", required: true },
+  { key: "rentAgreement", label: "Electricity Bill / Rent Agreement", required: true },
 ];
 const INTERIOR_FIELDS = [
   { key: "ac", label: "AC" },
@@ -34,7 +33,10 @@ const INTERIOR_FIELDS = [
   { key: "shoppingBasket", label: "Shopping Basket" },
   { key: "cart", label: "Cart" },
 ];
-const MAX_DOCUMENT_BYTES = 2 * 1024 * 1024;
+const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
+const ALLOWED_DOCUMENT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
+const ALLOWED_DOCUMENT_EXTENSIONS = [".pdf", ".jpg", ".png"];
+const PINCODE_CACHE_PREFIX = "store-pincode-location:v2:";
 
 const initialForm = {
   name: "",
@@ -45,8 +47,6 @@ const initialForm = {
   state: "Uttar Pradesh",
   pincode: "",
   country: "India",
-  latitude: "",
-  longitude: "",
   panNumber: "",
   managerName: "",
   managerMobile: "",
@@ -125,6 +125,20 @@ function getInteriorGrandTotal(items) {
   }, 0);
 }
 
+function locationFromPincodeOffice(office) {
+  if (!office) return null;
+  const city = String(
+    office.Division || office.District || office.Region || office.Block || "",
+  )
+    .replace(/\s+Division$/i, "")
+    .trim();
+  return {
+    city,
+    state: office.State || "",
+    country: office.Country || "India",
+  };
+}
+
 async function fileToDocument(file) {
   if (!file) return null;
   return new Promise((resolve, reject) => {
@@ -148,11 +162,14 @@ export default function CreateStorePage() {
   const [error, setError] = useState("");
   const [errors, setErrors] = useState({});
   const [savedStore, setSavedStore] = useState(null);
+  const [pincodeStatus, setPincodeStatus] = useState("");
 
   const onChange = (e) => {
     const value =
       e.target.name === "managerMobile"
         ? e.target.value.replace(/\D/g, "").slice(0, 10)
+        : e.target.name === "pincode"
+          ? e.target.value.replace(/\D/g, "").slice(0, 6)
         : ["storeAreaSqFt", "costPerSqFt"].includes(e.target.name)
           ? e.target.value.replace(/[^\d.]/g, "")
           : e.target.value;
@@ -164,11 +181,27 @@ export default function CreateStorePage() {
   const onCheck = (e) =>
     setForm((p) => ({ ...p, [e.target.name]: e.target.checked }));
   const onDocumentChange = async (key, file) => {
-    if (!file) return;
+    if (!file) {
+      setForm((p) => ({ ...p, documents: { ...p.documents, [key]: null } }));
+      setErrors((p) => ({ ...p, [`documents.${key}`]: "" }));
+      return;
+    }
+    const fileName = file.name.toLowerCase();
+    const isAllowedExtension = ALLOWED_DOCUMENT_EXTENSIONS.some((ext) =>
+      fileName.endsWith(ext),
+    );
+    const isAllowedType = ALLOWED_DOCUMENT_TYPES.includes(file.type);
+    if (!isAllowedExtension || !isAllowedType) {
+      setErrors((p) => ({
+        ...p,
+        [`documents.${key}`]: "Only JPG, PNG or PDF files are allowed",
+      }));
+      return;
+    }
     if (file.size > MAX_DOCUMENT_BYTES) {
       setErrors((p) => ({
         ...p,
-        [`documents.${key}`]: "File must be 2 MB or smaller",
+        [`documents.${key}`]: "File must be 5 MB or smaller",
       }));
       return;
     }
@@ -183,6 +216,82 @@ export default function CreateStorePage() {
       }));
     }
   };
+
+  useEffect(() => {
+    const pincode = form.pincode.trim();
+    if (pincode.length !== 6) {
+      setPincodeStatus("");
+      return;
+    }
+
+    const applyLocation = (location) => {
+      if (!location) return false;
+      setForm((current) => ({
+        ...current,
+        city: location.city || current.city,
+        state: location.state || current.state,
+        country: location.country || "India",
+      }));
+      setErrors((current) => ({
+        ...current,
+        city: "",
+        state: "",
+        country: "",
+        pincode: "",
+      }));
+      setPincodeStatus("Location filled from pincode");
+      return true;
+    };
+
+    const cacheKey = `${PINCODE_CACHE_PREFIX}${pincode}`;
+    try {
+      const cached = sessionStorage.getItem(cacheKey);
+      if (cached && applyLocation(JSON.parse(cached))) {
+        return;
+      }
+    } catch {
+      // Ignore cache read errors.
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    let cancelled = false;
+    setPincodeStatus("Fetching location...");
+
+    fetch(`https://api.postalpincode.in/pincode/${pincode}`, {
+      signal: controller.signal,
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const result = Array.isArray(data) ? data[0] : null;
+        const office = result?.PostOffice?.[0];
+        if (result?.Status !== "Success" || !office) {
+          setPincodeStatus("No location found for this pincode");
+          return;
+        }
+        const location = locationFromPincodeOffice(office);
+        applyLocation(location);
+        try {
+          sessionStorage.setItem(cacheKey, JSON.stringify(location));
+        } catch {
+          // Ignore cache write errors.
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPincodeStatus("Unable to fetch location");
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearTimeout(timeout);
+    };
+  }, [form.pincode]);
+
   const updateInteriorItem = (key, patch) => {
     setForm((current) => {
       const previous = current.interiorItems[key] || {};
@@ -217,6 +326,11 @@ export default function CreateStorePage() {
     if (!form.storeCode.trim()) next.storeCode = "Store code is required";
     if (!form.managerName.trim())
       next.managerName = "Franchise owner name is required";
+    if (!form.managerMobile.trim())
+      next.managerMobile = "Mobile number is required";
+    else if (!/^\d{10}$/.test(form.managerMobile))
+      next.managerMobile = "Mobile number must be exactly 10 digits";
+    if (!form.gstNumber.trim()) next.gstNumber = "GST number is required";
     if (!form.storeAreaSqFt || Number(form.storeAreaSqFt) < 600)
       next.storeAreaSqFt = "Store area must be at least 600 sq ft";
     if (!form.costPerSqFt || Number(form.costPerSqFt) < MIN_COST_PER_SQ_FT)
@@ -227,9 +341,6 @@ export default function CreateStorePage() {
       if (field.required && !form.documents[field.key]) {
         next[`documents.${field.key}`] = `${field.label} is required`;
       }
-    }
-    if (form.managerMobile && !/^\d{10}$/.test(form.managerMobile)) {
-      next.managerMobile = "Mobile number must be exactly 10 digits";
     }
     if (
       form.managerEmail &&
@@ -348,8 +459,6 @@ export default function CreateStorePage() {
                 ["State", savedStore.state || form.state],
                 ["Pincode", savedStore.pincode || form.pincode],
                 ["Country", savedStore.country || form.country],
-                ["Latitude", savedStore.meta?.latitude || form.latitude],
-                ["Longitude", savedStore.meta?.longitude || form.longitude],
                 ["Pan Number", savedStore.meta?.panNumber || form.panNumber],
               ]}
             />
@@ -372,11 +481,6 @@ export default function CreateStorePage() {
                 ],
                 ["Opening Time", savedStore.opening_time || form.openingTime],
                 ["Closing Time", savedStore.closing_time || form.closingTime],
-                [
-                  "Default Customer Group",
-                  savedStore.meta?.defaultCustomerGroup ||
-                    form.defaultCustomerGroup,
-                ],
                 [
                   "Store Code",
                   savedStore.meta?.storeCode ||
@@ -606,7 +710,14 @@ export default function CreateStorePage() {
                     onChange={onChange}
                     className={inputClass("pincode")}
                     placeholder="201309"
+                    inputMode="numeric"
+                    maxLength={6}
                   />
+                  {pincodeStatus ? (
+                    <span className="mt-1 block text-xs font-medium text-gray-500">
+                      {pincodeStatus}
+                    </span>
+                  ) : null}
                 </Field>
               </div>
 
@@ -617,27 +728,6 @@ export default function CreateStorePage() {
                     value={form.country}
                     onChange={onChange}
                     className={inputClass("country")}
-                  />
-                </Field>
-                <Field label="Latitude">
-                  <input
-                    name="latitude"
-                    value={form.latitude}
-                    onChange={onChange}
-                    className="input"
-                    placeholder="28.61"
-                  />
-                </Field>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Longitude">
-                  <input
-                    name="longitude"
-                    value={form.longitude}
-                    onChange={onChange}
-                    className="input"
-                    placeholder="77.21"
                   />
                 </Field>
                 <Field label="Pan Number">
@@ -669,7 +759,7 @@ export default function CreateStorePage() {
               </Field>
 
               <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Contact Mobile" error={errors.managerMobile}>
+                <Field label="Contact Mobile *" error={errors.managerMobile}>
                   <input
                     name="managerMobile"
                     type="tel"
@@ -713,16 +803,6 @@ export default function CreateStorePage() {
                   />
                 </Field>
               </div>
-
-              <Field label="Default Customer Group">
-                <input
-                  name="defaultCustomerGroup"
-                  value={form.defaultCustomerGroup}
-                  onChange={onChange}
-                  className="input"
-                  placeholder="None"
-                />
-              </Field>
 
               <Field label="Store Code *" error={errors.storeCode}>
                 <input
@@ -900,12 +980,12 @@ export default function CreateStorePage() {
                     className="input"
                   />
                 </Field>
-                <Field label="GST Number">
+                <Field label="GST Number *" error={errors.gstNumber}>
                   <input
                     name="gstNumber"
                     value={form.gstNumber}
                     onChange={onChange}
-                    className="input"
+                    className={inputClass("gstNumber")}
                   />
                 </Field>
               </div>
@@ -1047,10 +1127,17 @@ function Field({ label, children, error }) {
 }
 
 function DocumentUpload({ field, document, error, onChange }) {
+  const [showPreview, setShowPreview] = useState(false);
+  const [inputKey, setInputKey] = useState(0);
+  const documentType = String(document?.type || "").toLowerCase();
+  const isPdf = documentType.includes("pdf");
+  const isImage = documentType.startsWith("image/");
+
   return (
-    <label
-      className={`block rounded-lg border px-3 py-3 ${error ? "border-red-300 bg-red-50" : "border-gray-200 bg-white"}`}
-    >
+    <>
+      <label
+        className={`block rounded-lg border px-3 py-3 ${error ? "border-red-300 bg-red-50" : "border-gray-200 bg-white"}`}
+      >
       <span className="mb-2 block text-sm font-medium text-gray-700">
         {field.label}
         {field.required ? (
@@ -1060,22 +1147,104 @@ function DocumentUpload({ field, document, error, onChange }) {
         )}
       </span>
       <input
+        key={inputKey}
         type="file"
-        accept=".pdf,.jpg,.jpeg,.png"
-        onChange={(e) => onChange(e.target.files?.[0] || null)}
+        accept=".pdf,.jpg,.png"
+        onChange={(e) => {
+          setShowPreview(false);
+          onChange(e.target.files?.[0] || null);
+        }}
         className="block w-full text-xs text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-blue-50 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-blue-700 hover:file:bg-blue-100"
       />
       {document?.name ? (
-        <span className="mt-2 block truncate text-xs font-semibold text-green-700">
-          {document.name}
-        </span>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <span className="block truncate text-xs font-semibold text-green-700">
+            {document.name}
+          </span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setShowPreview((current) => !current);
+            }}
+            className="text-xs font-semibold text-blue-700 hover:underline"
+          >
+            {showPreview ? "Hide Preview" : "Show Preview"}
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setShowPreview(false);
+              setInputKey((current) => current + 1);
+              onChange(null);
+            }}
+            className="text-xs font-semibold text-red-600 hover:underline"
+          >
+            Remove
+          </button>
+        </div>
       ) : null}
+      <span className="mt-2 block text-xs text-gray-500">
+        Upload format: JPG/PNG/PDF. Max size: 5 MB.
+      </span>
       {error ? (
         <span className="mt-1 block text-xs font-medium text-red-600">
           {error}
         </span>
       ) : null}
-    </label>
+      </label>
+      {showPreview && document?.dataUrl ? (
+        <div
+          className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setShowPreview(false)}
+        >
+          <div
+            className="w-full max-w-4xl overflow-hidden rounded-lg bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-bold text-gray-900">
+                  {field.label} Preview
+                </h3>
+                <p className="truncate text-xs text-gray-500">
+                  {document.name}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPreview(false)}
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Hide Preview
+              </button>
+            </div>
+            <div className="h-[70vh] bg-gray-50 p-3">
+              {isImage ? (
+                <img
+                  src={document.dataUrl}
+                  alt={`${field.label} preview`}
+                  className="h-full w-full object-contain"
+                />
+              ) : isPdf ? (
+                <iframe
+                  src={document.dataUrl}
+                  title={`${field.label} preview`}
+                  className="h-full w-full rounded border border-gray-200 bg-white"
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm text-gray-500">
+                  Preview is not available for this file.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 

@@ -106,7 +106,11 @@ function normalizeProductImportRow(row = {}) {
     opening_stock_store: "inventory_store_name",
     inventory_store: "inventory_store_name",
     opening_stock_qty: "opening_stock_qty",
+    low_stock_qty: "default_low_stock_value",
+    low_stock_value: "default_low_stock_value",
     default_low_stock_value: "default_low_stock_value",
+    mbq: "minimum_base_quantity",
+    minimum_base_quantity: "minimum_base_quantity",
     disable_billing_on_zero: "disable_billing_on_zero",
     disable_sales_on_expiry: "disable_sales_on_expiry",
     inventory_method: "inventory_method",
@@ -188,7 +192,8 @@ function nullableText(value) {
 
 function normalizeUnit(value) {
   const unit = normalizeText(value).toUpperCase() || "PCS";
-  return ["PCS", "KG", "LTR"].includes(unit) ? unit : "PCS";
+  if (["G", "GM", "GRAM", "GRAMS"].includes(unit)) return "GRAMS";
+  return ["PCS", "KG", "GRAMS", "LTR"].includes(unit) ? unit : "PCS";
 }
 
 function normalizeStockItemType(value) {
@@ -405,7 +410,7 @@ function parseStoreSaleabilityFromRow(row = {}) {
   const byStore = new Map();
   for (const [key, value] of Object.entries(row)) {
     const match = key.match(
-      /^store_(\d+)_(enabled|selling_price|mrp|low_stock_value)$/,
+      /^store_(\d+)_(enabled|selling_price|mrp|low_stock_value|low_stock_qty|minimum_base_quantity|mbq)$/,
     );
     if (!match) continue;
     const storeId = Number(match[1]);
@@ -419,7 +424,8 @@ function parseStoreSaleabilityFromRow(row = {}) {
     enabled: toBoolean(fields.enabled, true),
     sellingPrice: toNumber(fields.selling_price, 0),
     mrp: toNumber(fields.mrp, 0),
-    lowStockValue: toNumber(fields.low_stock_value, 0),
+    lowStockValue: toNumber(fields.low_stock_value ?? fields.low_stock_qty, 0),
+    minimumBaseQuantity: toNumber(fields.minimum_base_quantity ?? fields.mbq, 0),
   }));
 }
 
@@ -656,6 +662,7 @@ async function insertProductWithIntegrations(client, row, user) {
           inventory_method: normalizeText(row.inventory_method) || "direct",
           stock_item_type: normalizeStockItemType(row.stock_item_type),
           default_low_stock_value: toNumber(row.default_low_stock_value, 0),
+          minimum_base_quantity: toNumber(row.minimum_base_quantity, 0),
           flags: {
             is_sellable_on_pos: toBoolean(row.is_sellable_on_pos, true),
             allow_variable_pricing: toBoolean(
@@ -689,16 +696,19 @@ async function insertProductWithIntegrations(client, row, user) {
   }
 
   const saleabilityRows = parseStoreSaleabilityFromRow(row);
+  const saleabilityStoreIds = new Set();
   for (const saleability of saleabilityRows) {
     if (!saleability.enabled) continue;
+    saleabilityStoreIds.add(saleability.storeId);
     await client.query(
-      `INSERT INTO product_saleability (product_id, store_id, is_active, selling_price, mrp, low_stock_value)
-       VALUES ($1, $2, true, $3, $4, $5)
+      `INSERT INTO product_saleability (product_id, store_id, is_active, selling_price, mrp, low_stock_value, minimum_base_quantity)
+       VALUES ($1, $2, true, $3, $4, $5, $6)
        ON CONFLICT (product_id, store_id) DO UPDATE SET
          is_active = EXCLUDED.is_active,
          selling_price = EXCLUDED.selling_price,
          mrp = EXCLUDED.mrp,
          low_stock_value = EXCLUDED.low_stock_value,
+         minimum_base_quantity = EXCLUDED.minimum_base_quantity,
          updated_at = NOW()`,
       [
         createdProduct.id,
@@ -706,6 +716,29 @@ async function insertProductWithIntegrations(client, row, user) {
         saleability.sellingPrice,
         saleability.mrp,
         saleability.lowStockValue,
+        saleability.minimumBaseQuantity,
+      ],
+    );
+  }
+
+  if (manageInventoryEnabled && inventoryStoreId && !saleabilityStoreIds.has(Number(inventoryStoreId))) {
+    await client.query(
+      `INSERT INTO product_saleability (product_id, store_id, is_active, selling_price, mrp, low_stock_value, minimum_base_quantity)
+       VALUES ($1, $2, true, $3, $4, $5, $6)
+       ON CONFLICT (product_id, store_id) DO UPDATE SET
+         is_active = EXCLUDED.is_active,
+         selling_price = CASE WHEN EXCLUDED.selling_price > 0 THEN EXCLUDED.selling_price ELSE product_saleability.selling_price END,
+         mrp = CASE WHEN EXCLUDED.mrp > 0 THEN EXCLUDED.mrp ELSE product_saleability.mrp END,
+         low_stock_value = EXCLUDED.low_stock_value,
+         minimum_base_quantity = EXCLUDED.minimum_base_quantity,
+         updated_at = NOW()`,
+      [
+        createdProduct.id,
+        inventoryStoreId,
+        toNumber(row.selling_price, 0),
+        toNumber(row.mrp, 0),
+        toNumber(row.default_low_stock_value, 0),
+        toNumber(row.minimum_base_quantity, 0),
       ],
     );
   }

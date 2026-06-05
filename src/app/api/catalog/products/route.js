@@ -26,7 +26,8 @@ async function ensureProductDiscountSchema() {
 
 function normalizeUnit(value) {
   const unit = String(value || 'PCS').trim().toUpperCase();
-  return ['PCS', 'KG', 'LTR'].includes(unit) ? unit : 'PCS';
+  if (['G', 'GM', 'GRAM', 'GRAMS'].includes(unit)) return 'GRAMS';
+  return ['PCS', 'KG', 'GRAMS', 'LTR'].includes(unit) ? unit : 'PCS';
 }
 
 function normalizeStockItemType(value) {
@@ -342,6 +343,7 @@ export async function POST(request) {
               inventory_method: body.inventory_method || 'direct',
               stock_item_type: body.stock_item_type || 'unbatched',
               default_low_stock_value: Number(body.default_low_stock_value || 0),
+              minimum_base_quantity: Number(body.minimum_base_quantity || body.mbq || 0),
             }),
           ]
         );

@@ -36,15 +36,45 @@ export async function GET(request) {
       const templateParams = [];
       const templateWhere = [`COALESCE(p.is_active, TRUE) = TRUE`];
       const brandId = String(searchParams.get("brand_id") || "").trim();
+      const brandIds = String(searchParams.get("brand_ids") || "")
+        .split(",")
+        .map((id) => Number(id))
+        .filter(Number.isFinite);
       const categoryId = String(searchParams.get("category_id") || "").trim();
+      const vendorIds = String(searchParams.get("vendor_ids") || searchParams.get("vendor_id") || "")
+        .split(",")
+        .map((id) => Number(id))
+        .filter(Number.isFinite);
 
-      if (brandId) {
+      if (brandIds.length) {
+        templateParams.push(brandIds);
+        templateWhere.push(`p.brand_id = ANY($${templateParams.length}::int[])`);
+      } else if (brandId) {
         templateParams.push(Number(brandId));
         templateWhere.push(`p.brand_id = $${templateParams.length}`);
       }
       if (categoryId) {
         templateParams.push(Number(categoryId));
         templateWhere.push(`p.category_id = $${templateParams.length}`);
+      }
+      if (vendorIds.length) {
+        templateParams.push(vendorIds);
+        templateWhere.push(`EXISTS (
+          SELECT 1
+          FROM stock_in si_vendor
+          JOIN stock_in_items sii_vendor ON sii_vendor.stock_in_id = si_vendor.id
+          LEFT JOIN vendors v_vendor ON v_vendor.id = si_vendor.vendor_id
+          WHERE sii_vendor.product_id = p.id
+            AND (
+              si_vendor.vendor_id = ANY($${templateParams.length}::int[])
+              OR EXISTS (
+                SELECT 1
+                FROM vendors selected_vendor
+                WHERE selected_vendor.id = ANY($${templateParams.length}::int[])
+                  AND LOWER(selected_vendor.name) = LOWER(COALESCE(si_vendor.vendor_name, ''))
+              )
+            )
+        )`);
       }
 
       const productsRes = await query(
@@ -59,6 +89,7 @@ export async function GET(request) {
            COALESCE(p.cost_price, 0) AS cost_price,
            COALESCE(p.mrp, 0) AS mrp,
            COALESCE(p.selling_price, 0) AS selling_price,
+           b.id AS brand_id,
            c.name AS category_name,
            b.name AS brand_name
          FROM products p
@@ -78,6 +109,7 @@ export async function GET(request) {
           sizeId: row.id,
           sizeName: "",
           category: row.category_name || "",
+          brandId: row.brand_id || "",
           brand: row.brand_name || "",
           barcode: row.barcode || "",
           sku: row.sku || "",
@@ -245,9 +277,15 @@ export async function POST(request) {
       await client.query("BEGIN");
       const method = payload.method || "new";
       const referenceType =
-        method === "purchase_order" ? "purchase_order" : null;
+        payload.referenceType ||
+        payload.reference_type ||
+        (method === "purchase_order" ? "purchase_order" : "stock_in");
       const referenceId =
-        payload.purchaseOrderId || payload.purchase_order_id || null;
+        payload.referenceId ||
+        payload.reference_id ||
+        payload.purchaseOrderId ||
+        payload.purchase_order_id ||
+        null;
       if (
         destinationId &&
         method !== "purchase_order" &&
@@ -296,13 +334,22 @@ export async function POST(request) {
       ];
       const res = await client.query(insertText, values);
       const id = res.rows[0].id;
-      const transactionId = `STK-${String(id).padStart(4, "0")}`;
+      const finalTransactionId = `STK-${String(id).padStart(4, "0")}`;
+      const finalReferenceId = referenceId || finalTransactionId;
       await client.query(
-        "UPDATE stock_in SET transaction_id = $1 WHERE id = $2",
-        [transactionId, id],
+        "UPDATE stock_in SET transaction_id = $1, reference_id = COALESCE(reference_id, $1) WHERE id = $2",
+        [finalTransactionId, id],
       );
       await client.query("COMMIT");
-      return NextResponse.json({ id, transactionId }, { status: 201 });
+      return NextResponse.json(
+        {
+          id,
+          transactionId: finalTransactionId,
+          referenceType,
+          referenceId: finalReferenceId,
+        },
+        { status: 201 },
+      );
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;

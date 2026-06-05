@@ -128,8 +128,7 @@ export async function GET(request) {
 
       safeQuery(`
         SELECT COUNT(*)::int AS count FROM products p
-        LEFT JOIN taxes t ON p.tax_id = t.id
-        ${productScopeWhere ? `${productScopeWhere} AND` : 'WHERE'} (t.hsn_code IS NULL OR t.hsn_code = '')
+        ${productScopeWhere ? `${productScopeWhere} AND` : 'WHERE'} (p.hsn_code IS NULL OR TRIM(p.hsn_code) = '')
       `),
       safeQuery(`SELECT COUNT(*)::int AS count FROM products p ${productScopeWhere ? `${productScopeWhere} AND` : 'WHERE'} COALESCE(p.mrp, 0) <= 0`),
       safeQuery(`
@@ -162,10 +161,10 @@ export async function GET(request) {
           END AS margin,
           b.name AS brand,
           c.name AS category,
-          COALESCE(t.hsn_code, '') AS hsn_code,
+          COALESCE(p.hsn_code, '') AS hsn_code,
           ${ACTUAL_STOCK_EXPR} AS stock,
           CASE WHEN p.image_url IS NULL OR p.image_url = '' THEN true ELSE false END AS no_image,
-          CASE WHEN t.hsn_code IS NULL OR t.hsn_code = '' THEN true ELSE false END AS hsn_missing,
+          CASE WHEN p.hsn_code IS NULL OR TRIM(p.hsn_code) = '' THEN true ELSE false END AS hsn_missing,
           CASE WHEN COALESCE(p.mrp, 0) <= 0 THEN true ELSE false END AS missing_price,
           CASE
             WHEN COALESCE(p.cost_price, 0) > 0
