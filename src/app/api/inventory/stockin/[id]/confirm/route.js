@@ -7,6 +7,7 @@ import { auditLog, requireAuth, requirePermission, requireStore } from '@/lib/ap
 import { ensureVendorInvoicesSchema } from '@/lib/vendorInvoicesSchema';
 import { ensureVendorsSchema } from '@/lib/vendorsSchema';
 import { createMarginApprovalRequest, ensureMarginApprovalSchema } from '@/lib/marginApprovalSchema';
+import { toDateInputValue } from '@/lib/dateUtils';
 
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -20,23 +21,7 @@ function toQty(value) {
 }
 
 function normalizeDate(value) {
-  if (!value) return null;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-  }
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    const year = value.getFullYear();
-    const month = String(value.getMonth() + 1).padStart(2, '0');
-    const day = String(value.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return toDateInputValue(value) || null;
 }
 
 function normalizeBatchRows(item) {

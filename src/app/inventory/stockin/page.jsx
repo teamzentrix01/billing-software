@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import InventoryShell from "@/components/inventory/InventoryShell";
 import SearchableSelect from "@/components/SearchableSelect";
+import { formatIndianDate, toDateInputValue } from "@/lib/dateUtils";
 import {
   getBulkField,
   parseBulkSheet,
@@ -82,14 +83,7 @@ const tableHeaders = [
 ];
 
 function formatDate(value) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  return formatIndianDate(value, "—");
 }
 
 function formatCost(value) {
@@ -233,15 +227,7 @@ function formatFileSize(bytes) {
 }
 
 function normalizeImportDate(value) {
-  if (!value) return "";
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
-  }
-  const raw = String(value).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toISOString().slice(0, 10);
+  return toDateInputValue(value);
 }
 
 function stockTemplateValue(row, keys, fallback = "") {
@@ -590,6 +576,9 @@ function findStockInTemplateProductMatch(
         (product) =>
           String(product.barcode || "")
             .trim()
+            .toLowerCase() === byBarcode ||
+          String(product.sku || "")
+            .trim()
             .toLowerCase() === byBarcode,
       ) || null
     );
@@ -600,6 +589,12 @@ function findStockInTemplateProductMatch(
       products.find(
         (product) =>
           String(product.sku || "")
+            .trim()
+            .toLowerCase() === bySku ||
+          String(product.barcode || "")
+            .trim()
+            .toLowerCase() === bySku ||
+          String(product.productId || "")
             .trim()
             .toLowerCase() === bySku,
       ) || null
@@ -866,6 +861,16 @@ export default function StockInPage() {
             productName: productName || productId || barcode || sku,
           };
         }
+        const expiryDate = normalizeImportDate(
+          getBulkField(row, ["expiry_date"]),
+        );
+        const batchNo =
+          getBulkField(row, [
+            "serial_number_serialnumber",
+            "serialnumber",
+            "serial_number",
+          ]) || "";
+
         return {
           product_id: matchedProduct.id,
           qty,
@@ -874,13 +879,15 @@ export default function StockInPage() {
               getBulkField(row, ["cost_unit", "cost_per_unit", "cost"], 0),
             ) || 0,
           tax_value: 0,
-          batch_no:
-            getBulkField(row, [
-              "serial_number_serialnumber",
-              "serialnumber",
-              "serial_number",
-            ]) || "",
-          expiry_date: normalizeImportDate(getBulkField(row, ["expiry_date"])),
+          batch_no: batchNo,
+          expiry_date: expiryDate,
+          batches: [
+            {
+              batch_no: batchNo,
+              qty,
+              expiry_date: expiryDate,
+            },
+          ],
           remarks: getBulkField(row, ["remarks"]),
         };
       })

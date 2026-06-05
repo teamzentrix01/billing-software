@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import InventoryShell from '@/components/inventory/InventoryShell';
+import { formatIndianDateTime } from '@/lib/dateUtils';
 
 const tableHeaders = [
   'Fulfillment Center',
@@ -34,10 +35,7 @@ function normalizeProducts(data) {
 }
 
 function formatDate(value) {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return formatIndianDateTime(value, '-');
 }
 
 function emptyLine() {

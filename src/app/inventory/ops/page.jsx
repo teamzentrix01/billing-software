@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import MainLayout from '@/components/MainLayout';
+import { formatIndianDate } from '@/lib/dateUtils';
 import {
   Bar,
   BarChart,
@@ -132,10 +133,7 @@ const listConfig = {
 };
 
 function formatDate(value) {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatIndianDate(value, '-');
 }
 
 function formatCost(value) {

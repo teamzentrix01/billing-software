@@ -2,19 +2,10 @@ import { NextResponse } from 'next/server';
 import { getClient, query } from '@/lib/db';
 import { ensureStockInSchema } from '@/lib/stockInSchema';
 import { requireAuth, requirePermission, requireStore } from '@/lib/api-protection';
+import { toDateInputValue } from '@/lib/dateUtils';
 
 function normalizeDate(value) {
-  if (!value) return '';
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-  }
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return toDateInputValue(value);
 }
 
 export async function GET(request, { params }) {
@@ -47,7 +38,8 @@ export async function GET(request, { params }) {
     const destinationMeta = typeof row.destination_meta === 'object' ? row.destination_meta : {};
     const itemsRes = await query(
       `SELECT sii.id, sii.product_id, COALESCE(sii.product_name, p.name) AS product_name,
-              p.sku, sii.qty, sii.cost_price, sii.tax_value, sii.batch_no, sii.mfg_date, sii.expiry_date
+              p.sku, p.barcode, p.product_id AS catalog_product_id,
+              sii.qty, sii.cost_price, sii.tax_value, sii.batch_no, sii.mfg_date, sii.expiry_date
        FROM stock_in_items sii
        LEFT JOIN products p ON p.id = sii.product_id
        WHERE sii.stock_in_id = $1
@@ -73,7 +65,7 @@ export async function GET(request, { params }) {
         id: item.id,
         product_id: item.product_id,
         name: item.product_name,
-        sku: item.sku,
+        sku: item.sku || item.barcode || item.catalog_product_id || '',
         qty: Number(item.qty || 0),
         cost_price: Number(item.cost_price || 0),
         tax_value: Number(item.tax_value || 0),
@@ -150,8 +142,8 @@ export async function PUT(request, { params }) {
           Number(item.cost_price || 0),
           Number(item.tax_value || 0),
           item.batch_no || null,
-          item.mfg_date || null,
-          item.expiry_date || null,
+          normalizeDate(item.mfg_date) || null,
+          normalizeDate(item.expiry_date) || null,
         ]
       );
     }

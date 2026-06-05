@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import InventoryShell from '@/components/inventory/InventoryShell';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 const tableHeaders = [
   'S. No.',
@@ -19,18 +20,7 @@ const tableHeaders = [
 ];
 
 function formatDate(value) {
-  if (!value) return '-';
-  if (typeof value === 'string') {
-    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (match) {
-      const [, year, month, day] = match;
-      const date = new Date(Number(year), Number(month) - 1, Number(day));
-      return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-    }
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatIndianDate(value, '-');
 }
 
 function formatTime(value) {

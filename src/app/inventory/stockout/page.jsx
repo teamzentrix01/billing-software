@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import InventoryShell from '@/components/inventory/InventoryShell';
 import SearchableSelect from '@/components/SearchableSelect';
 import { getBulkField, parseBulkSheet, pickSpreadsheetFile, toBoolean } from '@/lib/bulkSheet';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 async function fetchStores() {
   const res = await fetch('/api/stores');
@@ -56,10 +57,7 @@ const tableHeaders = [
 ];
 
 function formatDate(value) {
-  if (!value) return '-';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatIndianDate(value, '-');
 }
 
 function formatCost(value) {

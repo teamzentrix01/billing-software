@@ -18,7 +18,27 @@ function parseIds(value) {
     .filter(Number.isFinite);
 }
 
-async function fetchCatalogProducts({ search, pageSize, vendorIds = [] }) {
+function addBrandFilter(filters, params, { brandId = null, brandName = '' } = {}) {
+  const cleanBrandName = String(brandName || '').trim();
+  if (brandId && cleanBrandName) {
+    params.push(brandId);
+    const brandIdParam = params.length;
+    params.push(cleanBrandName);
+    filters.push(`(p.brand_id = $${brandIdParam} OR LOWER(COALESCE(b.name, '')) = LOWER($${params.length}))`);
+    return;
+  }
+  if (brandId) {
+    params.push(brandId);
+    filters.push(`p.brand_id = $${params.length}`);
+    return;
+  }
+  if (cleanBrandName) {
+    params.push(cleanBrandName);
+    filters.push(`LOWER(COALESCE(b.name, '')) = LOWER($${params.length})`);
+  }
+}
+
+async function fetchCatalogProducts({ search, pageSize, vendorIds = [], brandId = null, brandName = '' }) {
   const params = [];
   const filters = [`COALESCE(p.is_active, TRUE) = TRUE`];
   if (search) {
@@ -30,6 +50,7 @@ async function fetchCatalogProducts({ search, pageSize, vendorIds = [] }) {
       OR COALESCE(p.product_id, '') ILIKE $${params.length}
     )`);
   }
+  addBrandFilter(filters, params, { brandId, brandName });
   params.push(pageSize);
 
   const vendorNameSelect = vendorIds.length
@@ -59,7 +80,7 @@ async function fetchCatalogProducts({ search, pageSize, vendorIds = [] }) {
      LEFT JOIN taxes t ON t.id = p.tax_id
      WHERE ${filters.join(' AND ')}
      ORDER BY p.name ASC
-     LIMIT $${search ? 2 : 1}`,
+     LIMIT $${params.length}`,
     params
   );
 
@@ -88,11 +109,19 @@ export async function GET(request) {
     const search = String(searchParams.get('search') || '').trim();
     const destinationType = String(searchParams.get('destinationType') || '').toLowerCase();
     const vendorIds = parseIds(searchParams.get('vendorIds') || searchParams.get('vendor_ids'));
+    const brandId = Number(searchParams.get('brandId') || searchParams.get('brand_id') || 0) || null;
+    const brandName = String(searchParams.get('brandName') || searchParams.get('brand_name') || '').trim();
+    const catalogOnly = ['1', 'true', 'yes'].includes(String(searchParams.get('catalogOnly') || '').toLowerCase());
     const pageSize = Math.min(Math.max(Number(searchParams.get('pageSize') || 30), 1), 100);
+
+    if (catalogOnly) {
+      const records = await fetchCatalogProducts({ search, pageSize, vendorIds, brandId, brandName });
+      return successResponse({ records });
+    }
 
     if (source === 'vendor') {
       if (!vendorIds.length) {
-        const records = await fetchCatalogProducts({ search, pageSize });
+        const records = await fetchCatalogProducts({ search, pageSize, brandId, brandName });
         return successResponse({ records });
       }
 
@@ -107,6 +136,7 @@ export async function GET(request) {
           OR COALESCE(p.product_id, '') ILIKE $${params.length}
         )`);
       }
+      addBrandFilter(filters, params, { brandId, brandName });
       params.push(pageSize);
 
       const res = await query(
@@ -165,12 +195,12 @@ export async function GET(request) {
       if (records.length) return successResponse({ records });
 
       return successResponse({
-        records: await fetchCatalogProducts({ search, pageSize, vendorIds }),
+        records: await fetchCatalogProducts({ search, pageSize, vendorIds, brandId, brandName }),
       });
     }
 
     if (destinationType === 'warehouse') {
-      const records = await fetchCatalogProducts({ search, pageSize });
+      const records = await fetchCatalogProducts({ search, pageSize, brandId, brandName });
       return successResponse({ records });
     }
 
@@ -189,6 +219,7 @@ export async function GET(request) {
         OR COALESCE(p.product_id, '') ILIKE $${params.length}
       )`);
     }
+    addBrandFilter(filters, params, { brandId, brandName });
     params.push(pageSize);
 
     const res = await query(

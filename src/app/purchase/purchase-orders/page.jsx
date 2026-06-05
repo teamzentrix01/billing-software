@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import MainLayout from '@/components/MainLayout';
 import { fetchLookup, normalizeStores, normalizeVendors } from '@/lib/purchaseLookups';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 const tableHeaders = [
   'Purchase Order ID',
@@ -18,10 +19,7 @@ const tableHeaders = [
 ];
 
 function formatDate(value) {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatIndianDate(value, '—');
 }
 
 function mapRecordsToTable(records) {
