@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import InventoryShell from "@/components/inventory/InventoryShell";
 import SearchableSelect from "@/components/SearchableSelect";
+import { formatIndianDate, toDateInputValue } from "@/lib/dateUtils";
 import {
   getBulkField,
   parseBulkSheet,
@@ -82,14 +83,7 @@ const tableHeaders = [
 ];
 
 function formatDate(value) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  return formatIndianDate(value, "—");
 }
 
 function formatCost(value) {
@@ -99,6 +93,8 @@ function formatCost(value) {
 
 function mapRecordsToTable(records) {
   return (records || []).map((row) => ({
+    _id: row.id,
+    _status: row.status || "confirmed",
     "Transaction ID": row.transactionId
       ? `#${row.transactionId}`
       : `#STK-${row.id}`,
@@ -233,15 +229,22 @@ function formatFileSize(bytes) {
 }
 
 function normalizeImportDate(value) {
-  if (!value) return "";
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
-  }
-  const raw = String(value).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toISOString().slice(0, 10);
+  return toDateInputValue(value);
+}
+
+function parseBulkNumber(value, fallback = 0) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const cleaned = String(value ?? "")
+    .trim()
+    .replace(/,/g, "")
+    .replace(/[₹$]/g, "");
+  if (!cleaned) return fallback;
+  const direct = Number(cleaned);
+  if (Number.isFinite(direct)) return direct;
+  const match = cleaned.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return fallback;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function stockTemplateValue(row, keys, fallback = "") {
@@ -521,8 +524,7 @@ function applyStockInExpiryDateFormat(XLSX, worksheet, rowLimit) {
   const column = XLSX.utils.encode_col(columnIndex);
   for (let rowNumber = 2; rowNumber <= rowLimit; rowNumber++) {
     const ref = `${column}${rowNumber}`;
-    if (!worksheet[ref]) worksheet[ref] = { t: "s", v: "" };
-    worksheet[ref].z = "dd/mm/yy";
+    if (worksheet[ref]) worksheet[ref].z = "dd/mm/yyyy";
   }
 }
 
@@ -553,72 +555,179 @@ function buildCreateProductUrl(row) {
   return `/catalog/products/create?${params.toString()}`;
 }
 
+function normalizeProductLookupValue(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^'+/, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function compactProductLookupValue(value) {
+  return normalizeProductLookupValue(value).replace(/[^a-z0-9]/g, "");
+}
+
 function findStockInTemplateProductMatch(
   products,
   { productId, productName, barcode, sku },
 ) {
-  const byProductId = String(productId || "")
-    .trim()
-    .toLowerCase();
-  const byBarcode = String(barcode || "")
-    .trim()
-    .toLowerCase();
-  const bySku = String(sku || "")
-    .trim()
-    .toLowerCase();
-  const byName = String(productName || "")
-    .trim()
-    .toLowerCase();
+  const lookups = [
+    normalizeProductLookupValue(productId),
+    normalizeProductLookupValue(barcode),
+    normalizeProductLookupValue(sku),
+    normalizeProductLookupValue(productName),
+  ].filter(Boolean);
+  const compactLookups = lookups.map(compactProductLookupValue).filter(Boolean);
 
-  if (byProductId) {
-    return (
-      products.find(
-        (product) =>
-          String(product.id || "")
-            .trim()
-            .toLowerCase() === byProductId ||
-          String(product.productId || "")
-            .trim()
-            .toLowerCase() === byProductId,
-      ) || null
-    );
-  }
+  for (const product of products || []) {
+    const identifiers = [
+      product.id,
+      product.productId,
+      product.barcode,
+      product.sku,
+      product.productName,
+    ];
+    const normalizedIdentifiers = identifiers
+      .map(normalizeProductLookupValue)
+      .filter(Boolean);
+    if (lookups.some((lookup) => normalizedIdentifiers.includes(lookup))) {
+      return product;
+    }
 
-  if (byBarcode) {
-    return (
-      products.find(
-        (product) =>
-          String(product.barcode || "")
-            .trim()
-            .toLowerCase() === byBarcode,
-      ) || null
-    );
-  }
-
-  if (bySku) {
-    return (
-      products.find(
-        (product) =>
-          String(product.sku || "")
-            .trim()
-            .toLowerCase() === bySku,
-      ) || null
-    );
-  }
-
-  if (byName) {
-    return (
-      products.find(
-        (product) =>
-          String(product.productName || "")
-            .trim()
-            .toLowerCase() === byName,
-      ) || null
-    );
+    const compactIdentifiers = identifiers
+      .map(compactProductLookupValue)
+      .filter(Boolean);
+    if (
+      compactLookups.some((lookup) => compactIdentifiers.includes(lookup))
+    ) {
+      return product;
+    }
   }
 
   return null;
 }
+
+// ─── Destination Picker Modal ────────────────────────────────────────────────
+function DestinationPickerModal({ stores, onConfirm, onCancel }) {
+  const [selectedId, setSelectedId] = useState("");
+  const [search, setSearch] = useState("");
+
+  const filteredStores = stores.filter((store) =>
+    `${store.name || ""} ${store.id || ""}`
+      .toLowerCase()
+      .includes(search.trim().toLowerCase()),
+  );
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200">
+          <h2 className="text-[17px] font-bold text-gray-900">
+            Select Destination
+          </h2>
+          <p className="mt-1 text-[13px] text-gray-500">
+            Choose the store or warehouse for this bulk stock in.
+          </p>
+        </div>
+
+        <div className="px-6 pt-4 pb-2">
+          <input
+            autoFocus
+            type="text"
+            placeholder="Search store or warehouse..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-200"
+          />
+        </div>
+
+        <div className="px-6 pb-2 max-h-60 overflow-y-auto">
+          {filteredStores.length === 0 ? (
+            <p className="py-4 text-center text-sm text-gray-400">
+              No stores found.
+            </p>
+          ) : (
+            <div className="space-y-1 py-1">
+              {filteredStores.map((store) => {
+                const locationType = getLocationType(store);
+                const isWarehouse = locationType === "warehouse";
+                const isSelected = String(store.id) === String(selectedId);
+                return (
+                  <button
+                    key={store.id}
+                    type="button"
+                    onClick={() => setSelectedId(String(store.id))}
+                    className={`w-full flex items-center justify-between rounded-lg px-3 py-2.5 text-left transition-colors ${
+                      isSelected
+                        ? "bg-blue-50 border border-blue-300"
+                        : "border border-transparent hover:bg-gray-50"
+                    }`}
+                  >
+                    <div>
+                      <span className="block text-sm font-medium text-gray-800">
+                        {store.name}
+                      </span>
+                      <span className="block text-[11px] text-gray-400">
+                        ID: {store.id}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {locationType && (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                            isWarehouse
+                              ? "bg-purple-100 text-purple-700"
+                              : "bg-green-100 text-green-700"
+                          }`}
+                        >
+                          {isWarehouse ? "Warehouse" : locationType || "Store"}
+                        </span>
+                      )}
+                      {isSelected && (
+                        <svg
+                          className="h-4 w-4 text-blue-600"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={2.5}
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M5 13l4 4L19 7"
+                          />
+                        </svg>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-xl border border-gray-200 px-4 py-2.5 text-[13px] font-semibold text-gray-700 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!selectedId}
+            onClick={() => onConfirm(selectedId)}
+            className="rounded-xl bg-blue-600 px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function StockInPage() {
   const [showModal, setShowModal] = useState(false);
@@ -644,7 +753,8 @@ export default function StockInPage() {
   const [loadingTemplateOptions, setLoadingTemplateOptions] = useState(false);
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [templateFilters, setTemplateFilters] = useState({
-    brandId: "",
+    vendorId: "",
+    brandIds: [],
     categoryId: "",
   });
   const [filters, setFilters] = useState({
@@ -654,28 +764,24 @@ export default function StockInPage() {
     source: "",
   });
   const [pendingMissingProduct, setPendingMissingProduct] = useState(null);
+  const [bulkPreviewRows, setBulkPreviewRows] = useState([]);
+  const [bulkPreviewSelected, setBulkPreviewSelected] = useState({});
+  const [stockPreview, setStockPreview] = useState(null);
+  const [loadingStockPreview, setLoadingStockPreview] = useState(false);
+
+  // ── NEW: state for destination picker modal (bulk import flow) ──
+  const [destinationPickerRows, setDestinationPickerRows] = useState(null);
+  const [destinationPickerStores, setDestinationPickerStores] = useState([]);
+  const [showDestinationPicker, setShowDestinationPicker] = useState(false);
+
   const fileInputRef = useRef(null);
   const router = useRouter();
-  const destinationStores =
-    sourceType === "vendor"
-      ? stores
-      : stores.filter((store) => !isWarehouseLocation(store));
+  const destinationStores = stores;
   const filteredVendors = vendors.filter((vendor) =>
     `${vendor.name || ""} ${vendor.company || ""}`
       .toLowerCase()
       .includes(vendorQuery.trim().toLowerCase()),
   );
-
-  useEffect(() => {
-    if (sourceType === "vendor") return;
-    if (!destination) return;
-    const selectedStore = stores.find(
-      (store) => String(store.id) === String(destination),
-    );
-    if (selectedStore && isWarehouseLocation(selectedStore)) {
-      setDestination("");
-    }
-  }, [destination, sourceType, stores]);
 
   useEffect(() => {
     setLoadingList(true);
@@ -709,16 +815,34 @@ export default function StockInPage() {
     if (!showTemplateFilters) return;
     setLoadingTemplateOptions(true);
     Promise.all([
-      fetchCatalogOptions("/api/catalog/brands?pageSize=1000").catch(() => []),
+      fetch("/api/vendors?pageSize=1000")
+        .then((r) => r.json())
+        .catch(() => []),
+      fetchCatalogOptions("/api/catalog/brands?pageSize=1000").catch(
+        () => [],
+      ),
       fetchCatalogOptions("/api/catalog/categories?pageSize=1000").catch(
         () => [],
       ),
     ])
-      .then(([brands, categories]) => {
-        setTemplateBrands(brands);
+      .then(([vendorData, brands, categories]) => {
+        setVendors(Array.isArray(vendorData) ? vendorData : []);
+        setTemplateBrands(
+          brands
+            .filter((brand) => brand?.is_active !== false)
+            .map((brand) => ({
+              id: String(brand.id || "").trim(),
+              name: String(brand.name || "").trim(),
+            }))
+            .filter((brand) => brand.id && brand.name)
+            .sort((a, b) =>
+              a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+            ),
+        );
         setTemplateCategories(categories);
       })
       .catch(() => {
+        setVendors([]);
         setTemplateBrands([]);
         setTemplateCategories([]);
       })
@@ -757,7 +881,34 @@ export default function StockInPage() {
     setInvoiceNumber("");
   };
 
-  const processBulkRows = async (selectedRows) => {
+  const openBulkPreview = (rows) => {
+    const selectedMap = Object.fromEntries(
+      rows.map((row) => [row.preview_id, true]),
+    );
+    setBulkPreviewRows(rows);
+    setBulkPreviewSelected(selectedMap);
+  };
+
+  const closeBulkPreview = () => {
+    window.sessionStorage.removeItem(PENDING_STOCK_IN_BULK_KEY);
+    setBulkPreviewRows([]);
+    setBulkPreviewSelected({});
+  };
+
+  const confirmBulkPreview = async () => {
+    const selectedRows = bulkPreviewRows.filter(
+      (row) => bulkPreviewSelected[row.preview_id],
+    );
+    if (!selectedRows.length) {
+      alert("Please select at least one product to add.");
+      return;
+    }
+    closeBulkPreview();
+    await processBulkRows(selectedRows);
+  };
+
+  // ── UPDATED: replaced window.prompt with modal ──
+  const processBulkRows = async (selectedRows, destinationId) => {
     if (!selectedRows.length) {
       alert(
         "Please enter a quantity for the products you want to add, then upload the template again.",
@@ -765,17 +916,18 @@ export default function StockInPage() {
       return;
     }
 
-    const storeData = stores.length
-      ? stores
-      : await fetchStores().catch(() => []);
-    const destinationId = window.prompt(
-      `Enter destination Store/Warehouse ID for this Stock In:\n${storeData
-        .slice(0, 20)
-        .map((store) => `${store.id} - ${store.name}`)
-        .join("\n")}`,
-    );
-    if (!destinationId) return;
+    // If no destinationId yet, load stores and open the picker modal
+    if (!destinationId) {
+      const storeData = stores.length
+        ? stores
+        : await fetchStores().catch(() => []);
+      setDestinationPickerStores(Array.isArray(storeData) ? storeData : []);
+      setDestinationPickerRows(selectedRows);
+      setShowDestinationPicker(true);
+      return;
+    }
 
+    // Proceed with confirmed destinationId
     const draft = await postStockIn({
       method: "new",
       destination: String(destinationId).trim(),
@@ -810,12 +962,22 @@ export default function StockInPage() {
       .finally(() => setLoadingList(false));
 
     window.sessionStorage.removeItem(PENDING_STOCK_IN_BULK_KEY);
-    alert(
-      `Bulk stock draft ready: ${selectedRows.length} product(s) added. Please review and confirm.`,
-    );
     router.push(
       `/inventory/stockin/line-items?id=${encodeURIComponent(draft.id)}`,
     );
+  };
+
+  // Handler when user confirms destination in the picker modal
+  const handleDestinationPickerConfirm = async (destinationId) => {
+    setShowDestinationPicker(false);
+    const rows = destinationPickerRows;
+    setDestinationPickerRows(null);
+    await processBulkRows(rows, destinationId);
+  };
+
+  const handleDestinationPickerCancel = () => {
+    setShowDestinationPicker(false);
+    setDestinationPickerRows(null);
   };
 
   const handleParsedBulkRows = async (
@@ -832,24 +994,84 @@ export default function StockInPage() {
       { cache: "no-store" },
     );
     const templateJson = await templateRes.json().catch(() => ({}));
-    const existingProducts = Array.isArray(templateJson.records)
+    let existingProducts = Array.isArray(templateJson.records)
       ? templateJson.records
       : [];
+    try {
+      const catalogRes = await fetch("/api/catalog/products?pageSize=10000", {
+        cache: "no-store",
+      });
+      const catalogJson = await catalogRes.json().catch(() => ({}));
+      const catalogProducts =
+        catalogJson.data?.records || catalogJson.records || [];
+      if (Array.isArray(catalogProducts) && catalogProducts.length) {
+        const byId = new Map(
+          existingProducts.map((product) => [String(product.id), product]),
+        );
+        catalogProducts.forEach((product) => {
+          const id = String(product.id || "");
+          if (!id || byId.has(id)) return;
+          byId.set(id, {
+            id: product.id,
+            productId: product.product_id || product.productId || product.id,
+            productName: product.name || product.productName || "",
+            barcode: product.barcode || "",
+            sku: product.sku || "",
+            costPerUnit: Number(product.cost_price || product.costPerUnit || 0),
+            mrp: Number(product.mrp || 0),
+            sellingPrice: Number(
+              product.selling_price || product.sellingPrice || 0,
+            ),
+          });
+        });
+        existingProducts = Array.from(byId.values());
+      }
+    } catch {
+      // Stock-in template records are enough for normal uploads.
+    }
 
     const selectedRows = rows
-      .map((row) => {
-        const productId = getBulkField(row, ["product_id"]);
-        const productName = getBulkField(row, ["product_name", "name"]);
-        const barcode = getBulkField(row, ["barcode"]);
-        const sku = getBulkField(row, ["sku"]);
-        const qty = Number(getBulkField(row, ["quantity", "qty"], 0));
+      .map((row, index) => {
+        const productId = getBulkField(row, [
+          "product_id",
+          "product_code",
+          "item_code",
+          "code",
+        ]);
+        const productName = getBulkField(row, [
+          "product_name",
+          "item_name",
+          "product",
+          "name",
+        ]);
+        const barcode = getBulkField(row, [
+          "barcode",
+          "bar_code",
+          "ean",
+          "upc",
+        ]);
+        const sku = getBulkField(row, ["sku", "sku_code", "barcode_value"]);
+        const qty = parseBulkNumber(
+          getBulkField(
+            row,
+            [
+              "quantity",
+              "qty",
+              "total_qty",
+              "total_quantity",
+              "stock_qty",
+              "stock_in_qty",
+              "stock_in_quantity",
+              "qty_in",
+            ],
+            0,
+          ),
+        );
         if (!Number.isFinite(qty) || qty <= 0) return null;
-        if (
-          ![productId, productName, barcode, sku].some((value) =>
-            String(value || "").trim(),
-          )
-        )
-          return null;
+        const templateRowProduct =
+          Number.isInteger(row.__row_index) && row.__row_index >= 0
+            ? existingProducts[row.__row_index]
+            : existingProducts[index];
         const matchedProduct = findStockInTemplateProductMatch(
           existingProducts,
           {
@@ -858,29 +1080,48 @@ export default function StockInPage() {
             barcode,
             sku,
           },
-        );
+        ) || templateRowProduct;
         if (!matchedProduct) {
           return {
             missing: true,
             originalRow: row,
-            productName: productName || productId || barcode || sku,
+            productName: productName || productId || barcode || sku || "Row " + (index + 2),
           };
         }
+        const expiryDate = normalizeImportDate(
+          getBulkField(row, ["expiry_date"]),
+        );
+        const batchNo =
+          getBulkField(row, [
+            "serial_number_serialnumber",
+            "serialnumber",
+            "serial_number",
+          ]) || "";
+
         return {
+          preview_id: `${matchedProduct.id}-${index}`,
           product_id: matchedProduct.id,
+          product_name: matchedProduct.productName || productName || "",
+          sku: matchedProduct.sku || sku || matchedProduct.barcode || "",
           qty,
           cost_price:
-            Number(
-              getBulkField(row, ["cost_unit", "cost_per_unit", "cost"], 0),
+            parseBulkNumber(
+              getBulkField(
+                row,
+                ["cost_unit", "cost_per_unit", "cost_price", "cost"],
+                0,
+              ),
             ) || 0,
           tax_value: 0,
-          batch_no:
-            getBulkField(row, [
-              "serial_number_serialnumber",
-              "serialnumber",
-              "serial_number",
-            ]) || "",
-          expiry_date: normalizeImportDate(getBulkField(row, ["expiry_date"])),
+          batch_no: batchNo,
+          expiry_date: expiryDate,
+          batches: [
+            {
+              batch_no: batchNo,
+              qty,
+              expiry_date: expiryDate,
+            },
+          ],
           remarks: getBulkField(row, ["remarks"]),
         };
       })
@@ -902,7 +1143,7 @@ export default function StockInPage() {
       return;
     }
 
-    await processBulkRows(selectedRows);
+    openBulkPreview(selectedRows);
   };
 
   const handleBulkImport = async () => {
@@ -929,12 +1170,45 @@ export default function StockInPage() {
     setShowTemplateFilters(false);
   };
 
+  const openStockPreview = async (row) => {
+    if (!row?._id) return;
+    setLoadingStockPreview(true);
+    try {
+      const res = await fetch(`/api/inventory/stockin/${encodeURIComponent(row._id)}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load stock in preview");
+      setStockPreview(data);
+    } catch (err) {
+      alert(err.message || "Failed to load stock in preview");
+    } finally {
+      setLoadingStockPreview(false);
+    }
+  };
+
+  const editStockIn = (row) => {
+    if (!row?._id) return;
+    if (String(row._status || "").toLowerCase() === "confirmed") {
+      alert("Confirmed stock in cannot be edited directly. Use Preview to verify, then make a stock adjustment/validation for correction.");
+      return;
+    }
+    router.push(`/inventory/stockin/line-items?id=${encodeURIComponent(row._id)}`);
+  };
+
   const handleDownloadBulkTemplate = async () => {
+    if (!templateFilters.vendorId) {
+      alert("Please select a vendor first.");
+      return;
+    }
+    if (!templateFilters.brandIds.length) {
+      alert("Please select at least one brand.");
+      return;
+    }
     setDownloadingTemplate(true);
     try {
       const params = new URLSearchParams({ template: "products" });
-      if (templateFilters.brandId)
-        params.set("brand_id", templateFilters.brandId);
+      if (templateFilters.brandIds.length) {
+        params.set("brand_ids", templateFilters.brandIds.join(","));
+      }
       if (templateFilters.categoryId) {
         params.set("category_id", templateFilters.categoryId);
       }
@@ -944,7 +1218,7 @@ export default function StockInPage() {
       const json = await res.json();
       const records = Array.isArray(json.records) ? json.records : [];
       if (!records.length) {
-        alert("No products found for the selected brand/category.");
+        alert("No products found for the selected brand or category.");
         return;
       }
       const productRows = records.map((product) => ({
@@ -1253,7 +1527,221 @@ export default function StockInPage() {
         tableHeaders={tableHeaders}
         tableData={loadingList ? [] : tableData}
         emptyMessage={loadingList ? "Loading records…" : "No Records Found"}
+        rowActions={(row) => (
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => openStockPreview(row)}
+              className="rounded-lg border border-blue-100 px-3 py-1.5 text-[12px] font-semibold text-blue-700 hover:bg-blue-50"
+            >
+              Preview
+            </button>
+            <button
+              type="button"
+              onClick={() => editStockIn(row)}
+              className="rounded-lg border border-red-100 px-3 py-1.5 text-[12px] font-semibold text-red-700 hover:bg-red-50"
+            >
+              Edit
+            </button>
+          </div>
+        )}
       />
+
+      {(stockPreview || loadingStockPreview) && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 px-4">
+          <div className="flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-gray-200 px-6 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Stock In Preview</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  {stockPreview?.transactionId || "Loading..."} · {stockPreview?.destinationName || ""}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStockPreview(null)}
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+            <div className="grid gap-3 border-b border-gray-100 px-6 py-4 text-sm text-gray-600 sm:grid-cols-4">
+              <div><span className="block text-xs text-gray-400">Invoice</span>{stockPreview?.invoice_number || "—"}</div>
+              <div><span className="block text-xs text-gray-400">Date</span>{formatDate(stockPreview?.invoice_date)}</div>
+              <div><span className="block text-xs text-gray-400">Source</span>{stockPreview?.referenceType || "—"}</div>
+              <div><span className="block text-xs text-gray-400">Status</span>{stockPreview?.status || "—"}</div>
+            </div>
+            <div className="overflow-auto p-4">
+              {loadingStockPreview ? (
+                <div className="py-16 text-center text-sm text-gray-500">Loading preview...</div>
+              ) : (
+                <table className="w-full min-w-[820px]">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">
+                      <th className="px-3 py-2">Product</th>
+                      <th className="px-3 py-2">SKU</th>
+                      <th className="px-3 py-2">Batch</th>
+                      <th className="px-3 py-2">Qty</th>
+                      <th className="px-3 py-2">Cost</th>
+                      <th className="px-3 py-2">Tax</th>
+                      <th className="px-3 py-2">Expiry</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(stockPreview?.items || []).map((item) => (
+                      <tr key={item.id} className="border-b border-gray-50 text-[13px] text-gray-700">
+                        <td className="px-3 py-2 font-semibold text-gray-900">{item.name}</td>
+                        <td className="px-3 py-2">{item.sku || "—"}</td>
+                        <td className="px-3 py-2">{item.batch_no || "—"}</td>
+                        <td className="px-3 py-2">{item.qty}</td>
+                        <td className="px-3 py-2">{formatCost(item.cost_price)}</td>
+                        <td className="px-3 py-2">{formatCost(item.tax_value)}</td>
+                        <td className="px-3 py-2">{formatDate(item.expiry_date)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Destination Picker Modal (bulk import flow) ── */}
+      {showDestinationPicker && (
+        <DestinationPickerModal
+          stores={destinationPickerStores}
+          onConfirm={handleDestinationPickerConfirm}
+          onCancel={handleDestinationPickerCancel}
+        />
+      )}
+
+      {bulkPreviewRows.length > 0 && (
+        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/40 px-4">
+          <div className="flex max-h-[82vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Review Products To Add
+                </h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  Select only the products that should be added to this stock in.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeBulkPreview}
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
+                title="Cancel"
+              >
+                <i className="ti ti-x text-[18px]" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-gray-50 text-xs uppercase text-gray-500">
+                  <tr>
+                    <th className="w-16 px-4 py-3 text-left">
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={
+                            bulkPreviewRows.length > 0 &&
+                            bulkPreviewRows.every(
+                              (row) => bulkPreviewSelected[row.preview_id],
+                            )
+                          }
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setBulkPreviewSelected(
+                              Object.fromEntries(
+                                bulkPreviewRows.map((row) => [
+                                  row.preview_id,
+                                  checked,
+                                ]),
+                              ),
+                            );
+                          }}
+                          className="h-4 w-4 rounded border-gray-300"
+                        />
+                        <span>S.No</span>
+                      </label>
+                    </th>
+                    <th className="px-4 py-3 text-left">Product</th>
+                    <th className="px-4 py-3 text-left">SKU</th>
+                    <th className="px-4 py-3 text-right">Qty</th>
+                    <th className="px-4 py-3 text-right">Cost</th>
+                    <th className="px-4 py-3 text-left">Expiry</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {bulkPreviewRows.map((row, index) => (
+                    <tr
+                      key={row.preview_id}
+                      className={
+                        bulkPreviewSelected[row.preview_id]
+                          ? "bg-white"
+                          : "bg-gray-50 text-gray-400"
+                      }
+                    >
+                      <td className="px-4 py-3">
+                        <label className="inline-flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={!!bulkPreviewSelected[row.preview_id]}
+                            onChange={(event) =>
+                              setBulkPreviewSelected((current) => ({
+                                ...current,
+                                [row.preview_id]: event.target.checked,
+                              }))
+                            }
+                            className="h-4 w-4 rounded border-gray-300"
+                          />
+                          <span>{index + 1}</span>
+                        </label>
+                      </td>
+                      <td className="px-4 py-3 font-medium text-gray-900">
+                        {row.product_name || row.name || `Product ${row.product_id}`}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {row.sku || "—"}
+                      </td>
+                      <td className="px-4 py-3 text-right">{row.qty}</td>
+                      <td className="px-4 py-3 text-right">
+                        {formatCost(row.cost_price)}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {formatDate(row.expiry_date)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between border-t border-gray-200 px-6 py-4">
+              <span className="text-sm text-gray-600">
+                {bulkPreviewRows.filter((row) => bulkPreviewSelected[row.preview_id]).length} of {bulkPreviewRows.length} selected
+              </span>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={closeBulkPreview}
+                  className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmBulkPreview}
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showTemplateFilters && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-6">
@@ -1270,26 +1758,95 @@ export default function StockInPage() {
             <div className="space-y-4 p-6">
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-800">
-                  Brand
+                  Vendor
                 </label>
                 <select
-                  value={templateFilters.brandId}
+                  value={templateFilters.vendorId}
                   onChange={(event) =>
                     setTemplateFilters((current) => ({
                       ...current,
-                      brandId: event.target.value,
+                      vendorId: event.target.value,
+                      brandIds: [],
                     }))
                   }
                   disabled={loadingTemplateOptions || downloadingTemplate}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 outline-none focus:border-red-300 focus:ring-1 focus:ring-red-200"
                 >
-                  <option value="">All Brands</option>
-                  {templateBrands.map((brand) => (
-                    <option key={brand.id} value={brand.id}>
-                      {brand.name}
+                  <option value="">Select Vendor</option>
+                  {vendors.map((vendor) => (
+                    <option key={vendor.id} value={String(vendor.id)}>
+                      {vendor.name}
+                      {vendor.company ? ` - ${vendor.company}` : ""}
                     </option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <label className="block text-sm font-medium text-gray-800">
+                    Brands
+                  </label>
+                  {templateBrands.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTemplateFilters((current) => ({
+                          ...current,
+                          brandIds:
+                            current.brandIds.length === templateBrands.length
+                              ? []
+                              : templateBrands.map((brand) => String(brand.id)),
+                        }))
+                      }
+                      className="text-xs font-semibold text-red-600 hover:underline"
+                    >
+                      {templateFilters.brandIds.length === templateBrands.length
+                        ? "Clear all"
+                        : "Select all"}
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 p-3">
+                  {!templateFilters.vendorId ? (
+                    <p className="text-sm text-gray-500">
+                      Select vendor first.
+                    </p>
+                  ) : loadingTemplateOptions ? (
+                    <p className="text-sm text-gray-500">Loading brands...</p>
+                  ) : templateBrands.length ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {templateBrands.map((brand) => (
+                        <label
+                          key={brand.id}
+                          className="inline-flex items-center gap-2 text-sm text-gray-700"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={templateFilters.brandIds.includes(
+                              String(brand.id),
+                            )}
+                            onChange={(event) =>
+                              setTemplateFilters((current) => ({
+                                ...current,
+                                brandIds: event.target.checked
+                                  ? [...current.brandIds, String(brand.id)]
+                                  : current.brandIds.filter(
+                                      (id) => id !== String(brand.id),
+                                    ),
+                              }))
+                            }
+                            className="h-4 w-4 rounded border-gray-300"
+                          />
+                          <span>{brand.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">
+                      No brands found.
+                    </p>
+                  )}
+                </div>
               </div>
               <div>
                 <label className="mb-2 block text-sm font-medium text-gray-800">

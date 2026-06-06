@@ -26,6 +26,7 @@ function normalizeDistributionVia(value) {
 
 export default function VendorsPage() {
   const [vendors, setVendors] = useState([]);
+  const [brands, setBrands] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -46,13 +47,30 @@ export default function VendorsPage() {
     mobile_number: '',
     gst_number: '',
     margin: 0,
+    brand_ids: [],
     is_active: true,
   };
   const [form, setForm] = useState(emptyForm);
 
   useEffect(() => {
     fetchVendors();
+    fetchBrands();
   }, []);
+
+  const fetchBrands = async () => {
+    try {
+      const data = await fetchLookup('/api/catalog/brands?pageSize=1000');
+      const records = Array.isArray(data?.data?.records)
+        ? data.data.records
+        : Array.isArray(data?.records)
+          ? data.records
+          : [];
+      setBrands(records.filter((brand) => brand?.is_active !== false));
+    } catch (err) {
+      console.error('Failed to fetch brands', err);
+      setBrands([]);
+    }
+  };
 
   const fetchVendors = async () => {
     setLoading(true);
@@ -88,6 +106,9 @@ export default function VendorsPage() {
       ...vendor,
       business: normalizeDistributionVia(vendor.business),
       margin: Number(vendor.margin || 0),
+      brand_ids: Array.isArray(vendor.brand_ids)
+        ? vendor.brand_ids.map((id) => String(id))
+        : [],
       is_active: vendor.is_active !== false,
     });
     setShowModal(true);
@@ -110,6 +131,7 @@ export default function VendorsPage() {
     if (!form.mobile_number.trim()) return alert('Mobile number is required');
     if (!/^\d{10}$/.test(form.mobile_number)) return alert('Mobile number must be exactly 10 digits');
     if (!form.gst_number.trim()) return alert('GST number is required');
+    if (!Array.isArray(form.brand_ids) || form.brand_ids.length === 0) return alert('Please select at least one brand');
     if (form.email.trim() && !isValidEmail(form.email)) return alert('Enter a valid email address');
     setSaving(true);
     try {
@@ -317,6 +339,53 @@ export default function VendorsPage() {
                   <div className="col-span-2">
                     <label className="text-[12px] text-gray-700">Vendor Margin(%)</label>
                     <input type="number" value={form.margin} onChange={(e) => setForm({ ...form, margin: Number(e.target.value) })} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-[13px] text-gray-800 bg-white placeholder:text-gray-400 focus:outline-none focus:border-blue-500" />
+                  </div>
+                  <div className="col-span-2">
+                    <div className="mb-2 flex items-center justify-between">
+                      <label className="text-[12px] text-gray-700">Brands *</label>
+                      {brands.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setForm((current) => ({
+                              ...current,
+                              brand_ids:
+                                current.brand_ids.length === brands.length
+                                  ? []
+                                  : brands.map((brand) => String(brand.id)),
+                            }))
+                          }
+                          className="text-[12px] font-semibold text-blue-600 hover:underline"
+                        >
+                          {form.brand_ids.length === brands.length ? 'Clear all' : 'Select all'}
+                        </button>
+                      )}
+                    </div>
+                    <div className="max-h-44 overflow-y-auto rounded-lg border border-gray-300 p-3">
+                      {brands.length ? (
+                        <div className="grid grid-cols-2 gap-2">
+                          {brands.map((brand) => (
+                            <label key={brand.id} className="flex items-center gap-2 text-[13px] text-gray-700">
+                              <input
+                                type="checkbox"
+                                checked={form.brand_ids.includes(String(brand.id))}
+                                onChange={(event) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    brand_ids: event.target.checked
+                                      ? [...current.brand_ids, String(brand.id)]
+                                      : current.brand_ids.filter((id) => id !== String(brand.id)),
+                                  }))
+                                }
+                              />
+                              <span>{brand.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[12px] text-gray-500">No brands found.</p>
+                      )}
+                    </div>
                   </div>
                   <label className="col-span-2 flex items-center gap-2 text-[12px] text-gray-700">
                     <input type="checkbox" checked={form.is_active !== false} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />

@@ -71,12 +71,19 @@ export async function GET(req) {
       params.push(sku);
     }
 
-    searchQuery += ' ORDER BY p.name ASC LIMIT 1';
+    searchQuery += ' ORDER BY p.name ASC LIMIT 2';
 
     const res = await query(searchQuery, params);
 
     if (!res.rows.length) {
       return errorResponse('Product not found', 404);
+    }
+
+    if (res.rows.length > 1) {
+      return errorResponse(
+        'Multiple products found for this barcode/SKU. Please fix duplicate barcode/SKU in product master.',
+        409
+      );
     }
 
     return successResponse(res.rows[0]);

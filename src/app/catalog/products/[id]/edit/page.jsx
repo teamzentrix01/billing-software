@@ -37,14 +37,16 @@ const initialForm = {
   allow_variable_pricing: false,
   allow_discount_on_pos: false,
   include_tax: false,
+  default_low_stock_value: '',
+  minimum_base_quantity: '',
   inventory_method: 'direct',
   stock_item_type: 'unbatched',
   image_url: '',
 };
 
-const UNIT_OPTIONS = ['PCS', 'KG', 'LTR'];
+const UNIT_OPTIONS = ['PCS', 'KG', 'GRAMS', 'LTR'];
 
-const createEmptyStoreRow = () => ({ enabled: true, selling_price: '', mrp: '', low_stock_value: '' });
+const createEmptyStoreRow = () => ({ enabled: true, selling_price: '', mrp: '', low_stock_value: '', minimum_base_quantity: '' });
 
 function Card({ title, description, children, action }) {
   return (
@@ -148,6 +150,8 @@ export default function EditProductPage() {
               is_service: product.is_service ?? false,
               allow_discount_on_pos: product.allow_discount_on_pos ?? false,
               include_tax: product.include_tax ?? false,
+              default_low_stock_value: product.default_low_stock_value ?? '',
+              minimum_base_quantity: product.minimum_base_quantity ?? '',
               inventory_method: product.inventory_method || 'direct',
               stock_item_type: product.stock_item_type || 'unbatched',
               image_url: product.image_url || '',
@@ -190,6 +194,36 @@ export default function EditProductPage() {
       return acc;
     }, {}));
   }, [stores]);
+
+  useEffect(() => {
+    if (!params?.id || !stores.length) return;
+
+    (async () => {
+      try {
+        const response = await fetch(`/api/catalog/product-saleability?product_id=${params.id}&pageSize=1000`);
+        const json = await response.json();
+        if (!json.success) return;
+        const rows = json.data?.records || [];
+        setStoreRows((prev) => {
+          const next = { ...prev };
+          for (const record of rows) {
+            if (!record.store_id) continue;
+            next[record.store_id] = {
+              ...(next[record.store_id] || createEmptyStoreRow()),
+              enabled: record.is_active ?? true,
+              selling_price: record.selling_price ?? '',
+              mrp: record.mrp ?? '',
+              low_stock_value: record.low_stock_value ?? '',
+              minimum_base_quantity: record.minimum_base_quantity ?? '',
+            };
+          }
+          return next;
+        });
+      } catch {
+        // Store rows can still be edited with defaults if saleability lookup fails.
+      }
+    })();
+  }, [params?.id, stores]);
 
   const handleImageChange = (event) => {
     const file = event.target.files?.[0];
@@ -257,6 +291,8 @@ export default function EditProductPage() {
           is_sellable_on_pos: form.is_sellable_on_pos,
           allow_variable_pricing: form.allow_variable_pricing,
           allow_discount_on_pos: form.allow_discount_on_pos,
+          default_low_stock_value: Number(form.default_low_stock_value || 0),
+          minimum_base_quantity: Number(form.minimum_base_quantity || 0),
           inventory_method: form.inventory_method,
           stock_item_type: form.stock_item_type,
         }),
@@ -275,7 +311,15 @@ export default function EditProductPage() {
         await Promise.allSettled(activeStores.map(([storeId, row]) => fetch('/api/catalog/product-saleability', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ product_id: productId, store_id: storeId, is_active: row.enabled }),
+          body: JSON.stringify({
+            product_id: productId,
+            store_id: storeId,
+            is_active: row.enabled,
+            selling_price: Number(row.selling_price || form.selling_price || 0),
+            mrp: Number(row.mrp || form.mrp || 0),
+            low_stock_value: Number(row.low_stock_value || form.default_low_stock_value || 0),
+            minimum_base_quantity: Number(row.minimum_base_quantity || form.minimum_base_quantity || 0),
+          }),
         })));
       }
 
@@ -423,6 +467,7 @@ export default function EditProductPage() {
               <select value={form.unit} onChange={(event) => set('unit', event.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-blue-500">
                 {UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
               </select>
+              <p className="mt-1 text-xs text-gray-500">For weighted items like 650gm apple, select KG and use MBQ 0.65.</p>
             </div>
             <div className="flex flex-wrap items-center gap-4 pt-6">
               {[
@@ -502,9 +547,9 @@ export default function EditProductPage() {
           <div className="space-y-4">
             <div className="overflow-x-auto rounded-xl border border-gray-200">
               <table className="min-w-full divide-y divide-gray-200 text-sm">
-                <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500"><tr><th className="px-4 py-3 text-left">Store</th><th className="px-4 py-3 text-left">Enable</th><th className="px-4 py-3 text-left">Selling Price</th><th className="px-4 py-3 text-left">M.R.P.</th><th className="px-4 py-3 text-left">Low Stock Value</th></tr></thead>
+                <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500"><tr><th className="px-4 py-3 text-left">Store</th><th className="px-4 py-3 text-left">Enable</th><th className="px-4 py-3 text-left">Selling Price</th><th className="px-4 py-3 text-left">M.R.P.</th><th className="px-4 py-3 text-left">Low Stock Qty</th><th className="px-4 py-3 text-left">MBQ</th></tr></thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
-                  {stores.length === 0 ? <tr><td colSpan="5" className="px-4 py-8 text-center text-gray-400">No stores available</td></tr> : stores.map((store) => {
+                  {stores.length === 0 ? <tr><td colSpan="6" className="px-4 py-8 text-center text-gray-400">No stores available</td></tr> : stores.map((store) => {
                     const row = storeRows[store.id] || createEmptyStoreRow();
                     return (
                       <tr key={store.id} className={!row.enabled ? 'bg-gray-50' : ''}>
@@ -512,7 +557,8 @@ export default function EditProductPage() {
                         <td className="px-4 py-3"><input type="checkbox" checked={row.enabled} onChange={() => toggleStore(store.id)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" /></td>
                         <td className="px-4 py-3"><input type="number" value={row.selling_price} onChange={(event) => updateStoreRow(store.id, 'selling_price', event.target.value)} disabled={!row.enabled} className="w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none disabled:bg-gray-100" /></td>
                         <td className="px-4 py-3"><input type="number" value={row.mrp} onChange={(event) => updateStoreRow(store.id, 'mrp', event.target.value)} disabled={!row.enabled} className="w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none disabled:bg-gray-100" /></td>
-                        <td className="px-4 py-3"><input type="number" value={row.low_stock_value} onChange={(event) => updateStoreRow(store.id, 'low_stock_value', event.target.value)} disabled={!row.enabled} className="w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none disabled:bg-gray-100" /></td>
+                        <td className="px-4 py-3"><input type="number" min="0" step="0.001" value={row.low_stock_value} onChange={(event) => updateStoreRow(store.id, 'low_stock_value', event.target.value)} disabled={!row.enabled} className="w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none disabled:bg-gray-100" /></td>
+                        <td className="px-4 py-3"><input type="number" min="0" step="0.001" value={row.minimum_base_quantity} onChange={(event) => updateStoreRow(store.id, 'minimum_base_quantity', event.target.value)} disabled={!row.enabled} className="w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none disabled:bg-gray-100" /></td>
                       </tr>
                     );
                   })}

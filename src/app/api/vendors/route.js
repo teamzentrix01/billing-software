@@ -23,9 +23,32 @@ function mapVendor(r) {
     gst_number: r.gst_number,
     margin: Number(r.margin || 0),
     is_active: r.is_active !== false,
+    brand_ids: Array.isArray(r.brand_ids)
+      ? r.brand_ids.map((id) => String(id))
+      : [],
+    brands: Array.isArray(r.brands) ? r.brands.filter(Boolean) : [],
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
+}
+
+function normalizeBrandIds(value) {
+  return [...new Set((Array.isArray(value) ? value : [])
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0))];
+}
+
+async function saveVendorBrands(vendorId, brandIds) {
+  await query('DELETE FROM vendor_brands WHERE vendor_id = $1', [vendorId]);
+  if (!brandIds.length) return;
+  await query(
+    `INSERT INTO vendor_brands (vendor_id, brand_id)
+     SELECT $1, id
+     FROM brands
+     WHERE id = ANY($2::int[])
+     ON CONFLICT DO NOTHING`,
+    [vendorId, brandIds],
+  );
 }
 
 export async function GET(req) {
@@ -46,25 +69,30 @@ export async function GET(req) {
     const params = [];
     const conditions = [];
 
-    if (!includeInactive) conditions.push('COALESCE(is_active, TRUE) = TRUE');
+    if (!includeInactive) conditions.push('COALESCE(v.is_active, TRUE) = TRUE');
     if (search) {
       params.push(`%${search}%`);
       conditions.push(`(
-        name ILIKE $${params.length}
-        OR COALESCE(company, '') ILIKE $${params.length}
-        OR COALESCE(email, '') ILIKE $${params.length}
-        OR COALESCE(mobile_number, '') ILIKE $${params.length}
-        OR COALESCE(gst_number, '') ILIKE $${params.length}
+        v.name ILIKE $${params.length}
+        OR COALESCE(v.company, '') ILIKE $${params.length}
+        OR COALESCE(v.email, '') ILIKE $${params.length}
+        OR COALESCE(v.mobile_number, '') ILIKE $${params.length}
+        OR COALESCE(v.gst_number, '') ILIKE $${params.length}
       )`);
     }
     params.push(pageSize);
 
     const res = await query(
-          `SELECT id, name, company, business, address_1, address_2, city, state, pincode, country,
-            email, mobile_number, gst_number, margin, is_active, created_at, updated_at
-       FROM vendors
+          `SELECT v.id, v.name, v.company, v.business, v.address_1, v.address_2, v.city, v.state, v.pincode, v.country,
+            v.email, v.mobile_number, v.gst_number, v.margin, v.is_active, v.created_at, v.updated_at,
+            COALESCE(ARRAY_AGG(b.id ORDER BY b.name) FILTER (WHERE b.id IS NOT NULL), '{}') AS brand_ids,
+            COALESCE(ARRAY_AGG(b.name ORDER BY b.name) FILTER (WHERE b.id IS NOT NULL), '{}') AS brands
+       FROM vendors v
+       LEFT JOIN vendor_brands vb ON vb.vendor_id = v.id
+       LEFT JOIN brands b ON b.id = vb.brand_id
        ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
-       ORDER BY name
+       GROUP BY v.id
+       ORDER BY v.name
        LIMIT $${params.length}`,
       params
     );
@@ -99,6 +127,7 @@ export async function POST(req) {
       mobile_number,
       gst_number,
       margin,
+      brand_ids,
     } = body;
 
     if (!name || !String(name).trim()) {
@@ -120,6 +149,7 @@ export async function POST(req) {
       return NextResponse.json({ error: 'GST number is required' }, { status: 400 });
     }
 
+    const selectedBrandIds = normalizeBrandIds(brand_ids);
     const res = await query(
       `INSERT INTO vendors (
          name, company, business, address_1, address_2, city, state, pincode, country,
@@ -144,8 +174,12 @@ export async function POST(req) {
         Number(margin || 0),
       ]
     );
+    await saveVendorBrands(res.rows[0].id, selectedBrandIds);
 
-    return NextResponse.json(mapVendor(res.rows[0]), { status: 201 });
+    return NextResponse.json(
+      mapVendor({ ...res.rows[0], brand_ids: selectedBrandIds, brands: [] }),
+      { status: 201 },
+    );
   } catch (err) {
     console.error('Vendors POST error', err);
     if (err.code === '23505') {

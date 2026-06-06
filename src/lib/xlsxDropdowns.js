@@ -176,7 +176,7 @@ function patchWorksheetValidations(xml, validations) {
     `<dataValidations count="${validations.length}">`,
     ...validations.map(
       (validation) =>
-        `<dataValidation type="list" allowBlank="1" showErrorMessage="1" showInputMessage="1" sqref="${escapeXml(validation.range)}">` +
+        `<dataValidation type="list" allowBlank="1" showErrorMessage="${validation.showErrorMessage === false ? "0" : "1"}" showInputMessage="1" sqref="${escapeXml(validation.range)}">` +
         `<formula1>${escapeXml(validation.formula)}</formula1>` +
         "</dataValidation>",
     ),
@@ -410,7 +410,7 @@ export function prefixMatchOptionFormula(optionGroups, key, inputCell) {
   const optionRange = `'${OPTIONS_SHEET_NAME}'!$${column}$2:$${column}$${optionGroups[index].values.length + 1}`;
   const fallback = optionFormula(optionGroups, key);
 
-  return `IF(LEN(TRIM(${inputCell}))=0,${fallback},IFERROR(OFFSET(${firstCell},MATCH(${inputCell}&"*",${optionRange},0)-1,0,COUNTIF(${optionRange},${inputCell}&"*"),1),${fallback}))`;
+  return `IF(LEN(TRIM(${inputCell}))=0,${fallback},IFERROR(OFFSET(${firstCell},MATCH(TRIM(${inputCell})&"*",${optionRange},0)-1,0,COUNTIF(${optionRange},TRIM(${inputCell})&"*"),1),${fallback}))`;
 }
 
 function makeExcelName(value) {

@@ -36,7 +36,8 @@ export async function GET(request) {
     );
     params.push(pageSize, offset);
     const result = await query(
-      `SELECT ps.id, ps.is_active, ps.created_at,
+      `SELECT ps.id, ps.product_id, ps.store_id, ps.is_active, ps.selling_price, ps.mrp,
+              ps.low_stock_value, ps.minimum_base_quantity, ps.created_at,
               p.name AS product,
               st.name AS store
        FROM product_saleability ps
@@ -76,13 +77,14 @@ export async function POST(request) {
     if (storeCheck.error) return storeCheck.error;
 
     const result = await query(
-      `INSERT INTO product_saleability (product_id, store_id, is_active, selling_price, mrp, low_stock_value)
-       VALUES ($1, $2, COALESCE($3, true), COALESCE($4, 0), COALESCE($5, 0), COALESCE($6, 0))
+      `INSERT INTO product_saleability (product_id, store_id, is_active, selling_price, mrp, low_stock_value, minimum_base_quantity)
+       VALUES ($1, $2, COALESCE($3, true), COALESCE($4, 0), COALESCE($5, 0), COALESCE($6, 0), COALESCE($7, 0))
        ON CONFLICT (product_id, store_id) DO UPDATE SET
          is_active = EXCLUDED.is_active,
          selling_price = EXCLUDED.selling_price,
          mrp = EXCLUDED.mrp,
          low_stock_value = EXCLUDED.low_stock_value,
+         minimum_base_quantity = EXCLUDED.minimum_base_quantity,
          updated_at = NOW()
        RETURNING *`,
       [
@@ -92,6 +94,7 @@ export async function POST(request) {
         Number(body.selling_price || 0),
         Number(body.mrp || 0),
         Number(body.low_stock_value || 0),
+        Number(body.minimum_base_quantity || body.mbq || 0),
       ]
     );
 

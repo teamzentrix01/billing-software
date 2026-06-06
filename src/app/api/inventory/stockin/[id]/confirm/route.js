@@ -7,6 +7,7 @@ import { auditLog, requireAuth, requirePermission, requireStore } from '@/lib/ap
 import { ensureVendorInvoicesSchema } from '@/lib/vendorInvoicesSchema';
 import { ensureVendorsSchema } from '@/lib/vendorsSchema';
 import { createMarginApprovalRequest, ensureMarginApprovalSchema } from '@/lib/marginApprovalSchema';
+import { toDateInputValue } from '@/lib/dateUtils';
 
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -16,27 +17,11 @@ function toNumber(value, fallback = 0) {
 function toQty(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return 0;
-  return Math.trunc(parsed);
+  return Math.round(parsed * 1000) / 1000;
 }
 
 function normalizeDate(value) {
-  if (!value) return null;
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-  }
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    const year = value.getFullYear();
-    const month = String(value.getMonth() + 1).padStart(2, '0');
-    const day = String(value.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return toDateInputValue(value) || null;
 }
 
 function normalizeBatchRows(item) {
@@ -81,7 +66,7 @@ async function allocateWarehouseBatchStock(client, {
 
   const batchRes = await client.query(
     `SELECT ib.id, ib.product_id, ib.store_id, ib.batch_no, ib.mfg_date, ib.expiry_date,
-            ib.available_qty, ib.cost_price
+            ib.available_qty, ib.cost_price, ib.meta
      FROM inventory_batches ib
      INNER JOIN stores s ON s.id = ib.store_id
      WHERE ib.product_id = $1
@@ -136,6 +121,8 @@ async function allocateWarehouseBatchStock(client, {
       expiryDate: normalizeDate(batch.expiry_date),
       qty: usedQty,
       costPrice: toNumber(batch.cost_price),
+      mrp: toNumber(batch.meta?.mrp),
+      sellingPrice: toNumber(batch.meta?.sellingPrice),
       sourceWarehouseId: Number(batch.store_id),
     });
     remaining = Math.round((remaining - usedQty) * 1000) / 1000;
@@ -344,6 +331,22 @@ export async function POST(request, { params }) {
       await client.query('BEGIN');
       let marginApprovalCount = 0;
 
+      const lockedStockInRes = await client.query(
+        `SELECT id, status
+         FROM stock_in
+         WHERE id = $1
+         FOR UPDATE`,
+        [id]
+      );
+      if (!lockedStockInRes.rows.length) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Stock in not found' }, { status: 404 });
+      }
+      if (String(lockedStockInRes.rows[0].status || '').toLowerCase() === 'confirmed') {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Already confirmed' }, { status: 409 });
+      }
+
       // ── 4. Replace line items — use catalog name as source of truth ─────────
       await client.query('DELETE FROM stock_in_items WHERE stock_in_id = $1', [id]);
 
@@ -412,6 +415,9 @@ export async function POST(request, { params }) {
                 source: 'warehouse_stock_in',
                 sourceWarehouseId: allocation.sourceWarehouseId,
                 sourceBatchId: allocation.batchId,
+                costPrice: allocation.costPrice || costPrice,
+                mrp: allocation.mrp || mrp,
+                sellingPrice: allocation.sellingPrice || sellingPrice,
               },
             });
           }
@@ -452,7 +458,13 @@ export async function POST(request, { params }) {
               batchNo: batch.batchNo,
               mfgDate: normalizeDate(batch.mfgDate) || null,
               expiryDate: normalizeDate(batch.expiryDate) || null,
-              meta: { productName, invoiceNumber: form.invoice_number || null },
+              meta: {
+                productName,
+                invoiceNumber: form.invoice_number || null,
+                costPrice,
+                mrp,
+                sellingPrice,
+              },
             });
           }
         }

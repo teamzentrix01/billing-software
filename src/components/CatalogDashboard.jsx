@@ -125,10 +125,6 @@ export default function CatalogDashboard() {
                 Auto-fill HSN codes from product names; review before saving for clean GST reports.
               </p>
             </div>
-            <button className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 border border-orange-300 rounded-lg text-[12px] font-medium text-orange-500 hover:bg-orange-50 transition-colors">
-              <i className="ti ti-sparkles text-[12px]" />
-              Auto-fill
-            </button>
           </div>
         </div>
       </div>

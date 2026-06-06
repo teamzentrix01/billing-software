@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import InventoryShell from '@/components/inventory/InventoryShell';
 import { getBulkField, parseBulkSheet, pickSpreadsheetFile, toBoolean } from '@/lib/bulkSheet';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 async function fetchStores() {
   const res = await fetch('/api/stores');
@@ -38,10 +39,7 @@ const tableHeaders = [
 ];
 
 function formatDate(value) {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatIndianDate(value, '-');
 }
 
 function formatCost(value) {
@@ -54,6 +52,10 @@ function formatCurrency(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function getValidationItemKey(item) {
+  return String(item.variantKey || item.variant_key || item.batch_id || item.batchId || item.product_id);
 }
 
 function mapValidationsToTable(records) {
@@ -349,7 +351,15 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
     }
 
     const timer = setTimeout(() => {
-      fetch(`/api/catalog/products?search=${encodeURIComponent(searchTerm)}&pageSize=20`)
+      const params = new URLSearchParams({
+        search: searchTerm,
+        pageSize: '20',
+        batch_variants: 'true',
+      });
+      if (draft?.destination && draft.destination !== 'none') {
+        params.set('store_id', String(draft.destination));
+      }
+      fetch(`/api/inventory/products?${params.toString()}`)
         .then((res) => res.json())
         .then((res) => {
           const records = res?.data?.records ?? res?.records ?? [];
@@ -359,7 +369,7 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [searchTerm]);
+  }, [searchTerm, draft?.destination]);
 
   const filteredCart = cartFilter.trim()
     ? cart.filter((item) => (item.name || '').toLowerCase().includes(cartFilter.toLowerCase()))
@@ -379,26 +389,33 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
 
   const addToCart = (product) => {
     const productId = product.id ?? product.product_id;
+    const variantKey = product.variantKey || `${productId}:batch:${product.batchId || product.batch_id || 'stock'}`;
     setCart((current) => {
-      const existing = current.find((item) => String(item.product_id) === String(productId));
+      const existing = current.find((item) => getValidationItemKey(item) === String(variantKey));
       if (existing) {
         return current.map((item) =>
-          String(item.product_id) === String(productId)
-            ? { ...item, qty: Number(item.qty) + 1 }
+          getValidationItemKey(item) === String(variantKey)
+            ? { ...item, qty: String(Number(item.qty || 0) + 1) }
             : item
         );
       }
       const cost = Number(product.cost_price || 0);
       const taxRate = Number(product.tax_rate || 0);
+      const existingQty = Number(product.existingQty ?? product.availableStock ?? 0);
       return [
         ...current,
         {
+          variantKey,
           product_id: productId,
+          batch_id: product.batchId || product.batch_id || null,
+          batch_no: product.batchNo || product.batch_no || '',
           name: product.name,
           sku: product.sku,
+          barcode: product.barcode,
+          existing_qty: existingQty,
           cost_price: cost,
           tax_value: draft?.applyTaxes ? (cost * taxRate) / 100 : 0,
-          qty: 1,
+          qty: String(existingQty),
         },
       ];
     });
@@ -406,14 +423,29 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
     setProducts([]);
   };
 
-  const updateQty = (productId, qty) => {
+  const updateQty = (itemKey, qty) => {
+    const nextQty = qty === '' ? '' : Math.max(0, Number(qty) || 0);
     setCart((current) =>
       current.map((item) =>
-        String(item.product_id) === String(productId)
-          ? { ...item, qty: Math.max(1, Number(qty) || 1) }
+        getValidationItemKey(item) === String(itemKey)
+          ? { ...item, qty: nextQty }
           : item
       )
     );
+  };
+
+  const incrementQty = (itemKey, delta) => {
+    setCart((current) =>
+      current.map((item) => {
+        if (getValidationItemKey(item) !== String(itemKey)) return item;
+        const currentQty = Number(item.qty || 0);
+        return { ...item, qty: String(Math.max(0, currentQty + delta)) };
+      })
+    );
+  };
+
+  const removeCartItem = (itemKey) => {
+    setCart((current) => current.filter((item) => getValidationItemKey(item) !== String(itemKey)));
   };
 
   const confirm = async () => {
@@ -538,14 +570,19 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                   <div className="mb-4 divide-y divide-gray-100 rounded-lg border border-gray-100">
                     {products.map((product) => (
                       <button
-                        key={product.id}
+                        key={product.variantKey || `${product.id}-${product.batchId || product.batch_id || ''}`}
                         type="button"
                         onClick={() => addToCart(product)}
                         className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-blue-50/60"
                       >
                         <div>
                           <div className="text-[13px] font-medium text-gray-900">{product.name}</div>
-                          <div className="text-[12px] text-gray-500">SKU: {product.sku || '-'}</div>
+                          <div className="text-[12px] text-gray-500">
+                            SKU: {product.sku || '-'} · Existing: {Number(product.existingQty ?? product.availableStock ?? 0)}
+                          </div>
+                          <div className="text-[11px] text-gray-500">
+                            Cost: {formatCurrency(product.cost_price)}{product.batchNo || product.batch_no ? ` · Batch: ${product.batchNo || product.batch_no}` : ''}
+                          </div>
                         </div>
                         <span className="text-[12px] font-medium text-blue-600">Add</span>
                       </button>
@@ -562,6 +599,7 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                     <thead>
                       <tr className="border-b border-gray-100">
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Product</th>
+                        <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Existing</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Qty</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Cost</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Tax</th>
@@ -569,34 +607,57 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredCart.map((item) => (
-                        <tr key={item.product_id} className="border-b border-gray-50 hover:bg-gray-50/50">
+                      {filteredCart.map((item) => {
+                        const itemKey = getValidationItemKey(item);
+                        return (
+                        <tr key={itemKey} className="border-b border-gray-50 hover:bg-gray-50/50">
                           <td className="px-2 py-3">
                             <div className="text-[13px] font-medium text-gray-900">{item.name}</div>
-                            <div className="text-[11px] text-gray-500">{item.sku}</div>
+                            <div className="text-[11px] text-gray-500">{item.sku || item.barcode || '-'}</div>
+                            {item.batch_no && <div className="text-[11px] text-gray-400">Batch: {item.batch_no}</div>}
+                          </td>
+                          <td className="px-2 py-3 text-[13px] font-semibold text-gray-700">
+                            {Number(item.existing_qty || 0)}
                           </td>
                           <td className="px-2 py-3">
-                            <input
-                              type="number"
-                              min={1}
-                              value={item.qty}
-                              onChange={(e) => updateQty(item.product_id, e.target.value)}
-                              className="w-20 rounded border border-gray-200 px-2 py-1 text-[13px] text-gray-700"
-                            />
+                            <div className="flex w-32 items-center overflow-hidden rounded border border-gray-200 bg-white">
+                              <button
+                                type="button"
+                                onClick={() => incrementQty(itemKey, -1)}
+                                className="h-8 w-8 text-[15px] font-semibold text-gray-600 hover:bg-gray-50"
+                              >
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                min={0}
+                                value={item.qty}
+                                onChange={(e) => updateQty(itemKey, e.target.value)}
+                                className="h-8 w-16 border-x border-gray-200 text-center text-[13px] text-gray-700 outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => incrementQty(itemKey, 1)}
+                                className="h-8 w-8 text-[15px] font-semibold text-gray-600 hover:bg-gray-50"
+                              >
+                                +
+                              </button>
+                            </div>
                           </td>
                           <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.cost_price)}</td>
                           <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.tax_value)}</td>
                           <td className="px-2 py-3">
                             <button
                               type="button"
-                              onClick={() => setCart((current) => current.filter((cartItem) => cartItem.product_id !== item.product_id))}
+                              onClick={() => removeCartItem(itemKey)}
                               className="rounded p-1.5 text-red-500 hover:bg-red-50"
                             >
                               <i className="ti ti-trash text-[16px]" />
                             </button>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 ) : (

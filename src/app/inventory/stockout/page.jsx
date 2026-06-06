@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import InventoryShell from '@/components/inventory/InventoryShell';
 import SearchableSelect from '@/components/SearchableSelect';
 import { getBulkField, parseBulkSheet, pickSpreadsheetFile, toBoolean } from '@/lib/bulkSheet';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 async function fetchStores() {
   const res = await fetch('/api/stores');
@@ -56,10 +57,7 @@ const tableHeaders = [
 ];
 
 function formatDate(value) {
-  if (!value) return '-';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatIndianDate(value, '-');
 }
 
 function formatCost(value) {
@@ -171,6 +169,7 @@ export default function StockOutPage() {
         alert('No rows found in selected file.');
         return;
       }
+      const storeOptions = stores.length ? stores : await fetchStores().catch(() => []);
 
       const created = [];
       let failed = 0;
@@ -182,7 +181,7 @@ export default function StockOutPage() {
           const payload = {
             method,
             destination: method === 'stock_out'
-              ? String(getBulkField(row, ['destination_id', 'destination'], stores[0]?.id || ''))
+              ? String(getBulkField(row, ['destination_id', 'destination', 'store_id', 'store'], storeOptions[0]?.id || ''))
               : 'all',
             applyTaxes: toBoolean(getBulkField(row, ['apply_taxes']), true),
             addProductsPrefill: toBoolean(getBulkField(row, ['add_products_prefill']), true),

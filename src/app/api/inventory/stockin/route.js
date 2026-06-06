@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { query, getClient } from "@/lib/db";
 import { ensureStockInSchema } from "@/lib/stockInSchema";
 import { ensureCatalogExtrasSchema } from "@/lib/catalogExtrasSchema";
+import { ensureVendorsSchema } from "@/lib/vendorsSchema";
 import {
   appendStoreScope,
   requireAuth,
@@ -21,6 +22,7 @@ export async function GET(request) {
   try {
     await ensureStockInSchema();
     await ensureCatalogExtrasSchema();
+    await ensureVendorsSchema();
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
 
@@ -36,19 +38,65 @@ export async function GET(request) {
       const templateParams = [];
       const templateWhere = [`COALESCE(p.is_active, TRUE) = TRUE`];
       const brandId = String(searchParams.get("brand_id") || "").trim();
+      const brandIds = String(searchParams.get("brand_ids") || "")
+        .split(",")
+        .map((id) => Number(id))
+        .filter(Number.isFinite);
       const categoryId = String(searchParams.get("category_id") || "").trim();
 
-      if (brandId) {
+      let selectedBrandNames = [];
+      let selectedCategoryName = "";
+      if (brandIds.length) {
+        const brandNamesRes = await query(
+          `SELECT name FROM brands WHERE id = ANY($1::int[])`,
+          [brandIds],
+        ).catch(() => ({ rows: [] }));
+        selectedBrandNames = brandNamesRes.rows
+          .map((row) => String(row.name || "").trim().toLowerCase())
+          .filter(Boolean);
+      }
+      if (categoryId) {
+        const categoryNameRes = await query(
+          `SELECT name FROM categories WHERE id = $1 LIMIT 1`,
+          [Number(categoryId)],
+        ).catch(() => ({ rows: [] }));
+        selectedCategoryName = String(categoryNameRes.rows[0]?.name || "")
+          .trim()
+          .toLowerCase();
+      }
+
+      if (brandIds.length) {
+        templateParams.push(brandIds);
+        const brandIdParam = templateParams.length;
+        if (selectedBrandNames.length) {
+          templateParams.push(selectedBrandNames);
+          templateWhere.push(`(
+            p.brand_id = ANY($${brandIdParam}::int[])
+            OR LOWER(COALESCE(b.name, '')) = ANY($${templateParams.length}::text[])
+          )`);
+        } else {
+          templateWhere.push(`p.brand_id = ANY($${brandIdParam}::int[])`);
+        }
+      } else if (brandId) {
         templateParams.push(Number(brandId));
         templateWhere.push(`p.brand_id = $${templateParams.length}`);
       }
       if (categoryId) {
         templateParams.push(Number(categoryId));
-        templateWhere.push(`p.category_id = $${templateParams.length}`);
+        const categoryIdParam = templateParams.length;
+        if (selectedCategoryName) {
+          templateParams.push(selectedCategoryName);
+          templateWhere.push(`(
+            p.category_id = $${categoryIdParam}
+            OR LOWER(COALESCE(c.name, '')) = $${templateParams.length}
+          )`);
+        } else {
+          templateWhere.push(`p.category_id = $${categoryIdParam}`);
+        }
       }
-
-      const productsRes = await query(
-        `SELECT
+      const selectTemplateProducts = (whereParts, params) =>
+        query(
+          `SELECT
            p.id,
            p.product_id,
            p.name,
@@ -59,16 +107,33 @@ export async function GET(request) {
            COALESCE(p.cost_price, 0) AS cost_price,
            COALESCE(p.mrp, 0) AS mrp,
            COALESCE(p.selling_price, 0) AS selling_price,
+           b.id AS brand_id,
            c.name AS category_name,
            b.name AS brand_name
          FROM products p
          LEFT JOIN categories c ON c.id = p.category_id
          LEFT JOIN brands b ON b.id = p.brand_id
-         WHERE ${templateWhere.join(" AND ")}
+         WHERE ${whereParts.join(" AND ")}
          ORDER BY p.id ASC
          LIMIT 10000`,
+          params,
+        );
+
+      let productsRes = await selectTemplateProducts(
+        templateWhere,
         templateParams,
       );
+      if (
+        !productsRes.rows.length &&
+        categoryId &&
+        brandIds.length
+      ) {
+        const fallbackWhere = templateWhere.filter(
+          (part) => !part.includes("p.category_id"),
+        );
+        const fallbackParams = templateParams.slice(0, selectedBrandNames.length ? 2 : 1);
+        productsRes = await selectTemplateProducts(fallbackWhere, fallbackParams);
+      }
 
       return NextResponse.json({
         records: productsRes.rows.map((row) => ({
@@ -78,6 +143,7 @@ export async function GET(request) {
           sizeId: row.id,
           sizeName: "",
           category: row.category_name || "",
+          brandId: row.brand_id || "",
           brand: row.brand_name || "",
           barcode: row.barcode || "",
           sku: row.sku || "",
@@ -232,7 +298,7 @@ export async function POST(request) {
         [destinationId],
       );
       const destinationMeta = destinationRes.rows[0]?.meta || {};
-      if (isWarehouseMeta(destinationMeta) && sourceType !== "vendor") {
+      if (isWarehouseMeta(destinationMeta) && !["vendor", "warehouse"].includes(sourceType)) {
         return NextResponse.json(
           { error: "Stock in destination must be a store, not a warehouse" },
           { status: 400 },
@@ -245,9 +311,15 @@ export async function POST(request) {
       await client.query("BEGIN");
       const method = payload.method || "new";
       const referenceType =
-        method === "purchase_order" ? "purchase_order" : null;
+        payload.referenceType ||
+        payload.reference_type ||
+        (method === "purchase_order" ? "purchase_order" : "stock_in");
       const referenceId =
-        payload.purchaseOrderId || payload.purchase_order_id || null;
+        payload.referenceId ||
+        payload.reference_id ||
+        payload.purchaseOrderId ||
+        payload.purchase_order_id ||
+        null;
       if (
         destinationId &&
         method !== "purchase_order" &&
@@ -296,13 +368,22 @@ export async function POST(request) {
       ];
       const res = await client.query(insertText, values);
       const id = res.rows[0].id;
-      const transactionId = `STK-${String(id).padStart(4, "0")}`;
+      const finalTransactionId = `STK-${String(id).padStart(4, "0")}`;
+      const finalReferenceId = referenceId || finalTransactionId;
       await client.query(
-        "UPDATE stock_in SET transaction_id = $1 WHERE id = $2",
-        [transactionId, id],
+        "UPDATE stock_in SET transaction_id = $1, reference_id = COALESCE(reference_id, $1) WHERE id = $2",
+        [finalTransactionId, id],
       );
       await client.query("COMMIT");
-      return NextResponse.json({ id, transactionId }, { status: 201 });
+      return NextResponse.json(
+        {
+          id,
+          transactionId: finalTransactionId,
+          referenceType,
+          referenceId: finalReferenceId,
+        },
+        { status: 201 },
+      );
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;

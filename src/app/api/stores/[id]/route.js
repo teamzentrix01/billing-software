@@ -146,11 +146,17 @@ export async function PUT(request, { params }) {
     const managerEmail = String(body.managerEmail || "")
       .trim()
       .toLowerCase();
-    if (managerMobile && !/^\d{10}$/.test(managerMobile)) {
+    if (!managerMobile) {
+      return errorResponse("Mobile number is required", 422);
+    }
+    if (!/^\d{10}$/.test(managerMobile)) {
       return errorResponse("Mobile number must be exactly 10 digits", 422);
     }
     if (managerEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(managerEmail)) {
       return errorResponse("Enter a valid e-mail address", 422);
+    }
+    if (!String(body.gstNumber || "").trim()) {
+      return errorResponse("GST number is required", 422);
     }
 
     const existing = await query(

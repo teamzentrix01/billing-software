@@ -16,9 +16,16 @@ export const REQUIRED_STORE_DOCUMENT_KEYS = [
   "agreement",
   "aadhaar",
   "panCard",
-  "registryCopy",
+  "rentAgreement",
 ];
-export const OPTIONAL_STORE_DOCUMENT_KEYS = ["rentAgreement"];
+export const OPTIONAL_STORE_DOCUMENT_KEYS = [];
+export const ALLOWED_STORE_DOCUMENT_TYPES = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+];
+export const ALLOWED_STORE_DOCUMENT_EXTENSIONS = [".pdf", ".jpg", ".png"];
+export const MAX_STORE_DOCUMENT_BYTES = 5 * 1024 * 1024;
 export const INTERIOR_ITEM_KEYS = [
   "ac",
   "refrigerator",
@@ -57,10 +64,20 @@ function cleanDocumentPayload(doc) {
   const name = String(doc.name || "").trim();
   const dataUrl = String(doc.dataUrl || "").trim();
   if (!name || !dataUrl) return null;
+  const lowerName = name.toLowerCase();
+  const type = String(doc.type || "").trim().toLowerCase();
+  const hasAllowedExtension = ALLOWED_STORE_DOCUMENT_EXTENSIONS.some((ext) =>
+    lowerName.endsWith(ext),
+  );
+  const hasAllowedType = !type || ALLOWED_STORE_DOCUMENT_TYPES.includes(type);
+  const size = Number(doc.size || 0);
+  if (!hasAllowedExtension || !hasAllowedType || size > MAX_STORE_DOCUMENT_BYTES) {
+    return null;
+  }
   return {
     name,
-    type: String(doc.type || "").trim(),
-    size: Number(doc.size || 0),
+    type,
+    size,
     dataUrl,
   };
 }
@@ -91,9 +108,11 @@ export function buildStoreDocuments(body = {}) {
   for (const key of [
     ...REQUIRED_STORE_DOCUMENT_KEYS,
     ...OPTIONAL_STORE_DOCUMENT_KEYS,
+    "registryCopy",
   ]) {
     out[key] = cleanDocumentPayload(documents[key]);
   }
+  delete out.registryCopy;
   return out;
 }
 
@@ -128,6 +147,26 @@ export function validateStoreCommercialPayload(
     errors.push({
       field: "managerName",
       message: "Franchise owner name is required",
+    });
+  }
+
+  const mobile = String(body.managerMobile || "").replace(/\D/g, "");
+  if (!mobile) {
+    errors.push({
+      field: "managerMobile",
+      message: "Mobile number is required",
+    });
+  } else if (!/^\d{10}$/.test(mobile)) {
+    errors.push({
+      field: "managerMobile",
+      message: "Mobile number must be exactly 10 digits",
+    });
+  }
+
+  if (!String(body.gstNumber || "").trim()) {
+    errors.push({
+      field: "gstNumber",
+      message: "GST number is required",
     });
   }
 
@@ -173,7 +212,7 @@ export function validateStoreCommercialPayload(
       if (!documents[key]) {
         errors.push({
           field: `documents.${key}`,
-          message: `${key} document is required`,
+          message: `${getStoreDocumentLabel(key)} is required`,
         });
       }
     }
@@ -202,8 +241,6 @@ export function buildStoreMeta(body = {}) {
   const interior = cleanInteriorItems(body.interiorItems);
   return {
     locationType: body.locationType || "Store",
-    latitude: body.latitude || "",
-    longitude: body.longitude || "",
     panNumber: body.panNumber || "",
     defaultCustomerGroup: body.defaultCustomerGroup || "",
     storeCode: normalizeStoreCode(body),
@@ -289,10 +326,21 @@ export function mergeStoreMeta(existingMeta, body = {}) {
   }
   delete merged.shortCode;
   delete merged.storeGuid;
+  delete merged.latitude;
+  delete merged.longitude;
   return merged;
 }
 
 export function getStoreCode(meta) {
   const parsed = parseMeta(meta);
   return parsed.storeCode || parsed.shortCode || "";
+}
+
+export function getStoreDocumentLabel(key) {
+  return {
+    agreement: "Agreement",
+    aadhaar: "Aadhaar",
+    panCard: "PAN Card",
+    rentAgreement: "Electricity Bill / Rent Agreement",
+  }[key] || key;
 }

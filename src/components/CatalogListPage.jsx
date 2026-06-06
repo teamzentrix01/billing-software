@@ -158,6 +158,8 @@ export default function CatalogListPage({
   const [bulkOpen, setBulkOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
+  const [productImportPreviewRows, setProductImportPreviewRows] = useState([]);
+  const [productImportSelected, setProductImportSelected] = useState({});
   const [toast, setToast] = useState(null);
   const fileRef = useRef();
 
@@ -181,6 +183,59 @@ export default function CatalogListPage({
   };
   const handlePageSizeChange = (s) => {
     if (onPageSizeChange) onPageSizeChange(s);
+  };
+
+  const getProductPreviewName = (row) =>
+    row["Product Name"] ||
+    row["product_name"] ||
+    row.name ||
+    row.Name ||
+    row["✓ Product Name"] ||
+    "Unnamed product";
+
+  const getProductPreviewSku = (row) =>
+    row.SKU || row.sku || row.Barcode || row.barcode || row["Product Code"] || row.product_id || "";
+
+  const importBulkRows = async (rowsToImport) => {
+    if (!rowsToImport.length) {
+      showToast("Select at least one product to import", "error");
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const res = await fetch("/api/catalog/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: bulkImportType, rows: rowsToImport }),
+      });
+      const json = await res.json();
+
+      if (json.success) {
+        setImportResult(json.data);
+        showToast(`${json.data.inserted} records imported successfully!`);
+        onImportSuccess?.();
+      } else {
+        showToast(json.message || "Import failed", "error");
+      }
+    } catch (err) {
+      showToast("Failed to import file", "error");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const closeProductImportPreview = () => {
+    setProductImportPreviewRows([]);
+    setProductImportSelected({});
+  };
+
+  const confirmProductImportPreview = async () => {
+    const selectedRows = productImportPreviewRows
+      .filter((row) => productImportSelected[row.__previewId])
+      .map(({ __previewId, __serialNo, ...row }) => row);
+    closeProductImportPreview();
+    await importBulkRows(selectedRows);
   };
 
   const handleAllCheck = () => {
@@ -304,7 +359,8 @@ export default function CatalogListPage({
         ...PRODUCT_ATTRIBUTE_COLUMNS,
         "Opening Stock Store",
         "Opening Stock Qty",
-        "Default Low Stock Value",
+        "Low Stock Qty",
+        "MBQ",
         "Disable Billing On Zero",
         "Disable Sales On Expiry",
         "Inventory Method",
@@ -363,12 +419,13 @@ export default function CatalogListPage({
         Description: "description",
         "Opening Stock Store": "inventory_store_name",
         "Opening Stock Qty": "opening_stock_qty",
-        "Default Low Stock Value": "default_low_stock_value",
+        "Low Stock Qty": "default_low_stock_value",
+        MBQ: "minimum_base_quantity",
         "Disable Billing On Zero": "disable_billing_on_zero",
         "Disable Sales On Expiry": "disable_sales_on_expiry",
         "Inventory Method": "inventory_method",
       };
-      const dataRows = templateRecords.map((record) =>
+      const dataRows = (bulkImportType === "products" ? [] : templateRecords).map((record) =>
         headers.map((header) => {
           const normalizedHeader = cleanHeader(header);
           const value = getTemplateCellValue(
@@ -461,20 +518,21 @@ export default function CatalogListPage({
         .map((header) => headerIndex(header))
         .filter((index) => index >= 0);
       const validations = [];
-      const addValidation = (col, formula) => {
+      const addValidation = (col, formula, options = {}) => {
         if (col < 0 || !formula) return;
         validations.push({
           range: `${XLSX.utils.encode_col(col)}2:${XLSX.utils.encode_col(col)}${TEMPLATE_ROW_LIMIT}`,
           formula,
+          ...options,
         });
       };
       for (const col of booleanCols) addValidation(col, '"Yes,No"');
-      addValidation(unitCol, '"PCS,KG,LTR"');
+      addValidation(unitCol, '"PCS,KG,GRAMS,LTR"');
       addValidation(includeTaxCol, '"Yes,No"');
       addValidation(inventoryMethodCol, '"direct,indirect"');
       addValidation(stockTypeCol, '"batched,unbatched"');
       if (bulkImportType === "products") {
-        const addPrefixValidation = (header, optionKey) => {
+        const addFilterableDropdownValidation = (header, optionKey) => {
           const col = headerIndex(header);
           if (col < 0) return;
           addValidation(
@@ -484,13 +542,14 @@ export default function CatalogListPage({
               optionKey,
               `${XLSX.utils.encode_col(col)}2`,
             ),
+            { showErrorMessage: false },
           );
         };
-        addPrefixValidation("Brand", "brands");
-        addPrefixValidation("Category", "categories");
-        addPrefixValidation("Sub Category", "sub_categories");
-        addPrefixValidation("Income Head", "income_heads");
-        addPrefixValidation("Opening Stock Store", "stores");
+        addFilterableDropdownValidation("Brand", "brands");
+        addFilterableDropdownValidation("Category", "categories");
+        addFilterableDropdownValidation("Sub Category", "sub_categories");
+        addFilterableDropdownValidation("Income Head", "income_heads");
+        addFilterableDropdownValidation("Opening Stock Store", "stores");
       }
       XLSX.utils.book_append_sheet(wb, ws, "Template");
       if (
@@ -510,7 +569,9 @@ export default function CatalogListPage({
           ["Field", "Requirement / allowed values"],
           ["Product Name", "Required"],
           ["Selling Price", "Required"],
-          ["Unit", "Required: PCS, KG, or LTR"],
+          ["Unit", "Required: PCS, KG, GRAMS, or LTR"],
+          ["Low Stock Qty", "Triggers low stock alerts and ARS reorder suggestions."],
+          ["MBQ", "Minimum base quantity. Example: use 0.65 for 650gm when Unit is KG."],
           [
             "include_tax",
             "Yes/No. Use Yes when GST is already included in selling_price.",
@@ -575,19 +636,18 @@ export default function CatalogListPage({
         return;
       }
 
-      const res = await fetch("/api/catalog/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: bulkImportType, rows: parsed }),
-      });
-      const json = await res.json();
-
-      if (json.success) {
-        setImportResult(json.data);
-        showToast(`${json.data.inserted} records imported successfully!`);
-        onImportSuccess?.();
+      if (bulkImportType === "products") {
+        const previewRows = parsed.map((row, index) => ({
+          ...row,
+          __previewId: `${Date.now()}-${index}`,
+          __serialNo: index + 1,
+        }));
+        setProductImportPreviewRows(previewRows);
+        setProductImportSelected(
+          Object.fromEntries(previewRows.map((row) => [row.__previewId, true])),
+        );
       } else {
-        showToast(json.message || "Import failed", "error");
+        await importBulkRows(parsed);
       }
     } catch (err) {
       showToast("Failed to read file", "error");
@@ -728,6 +788,127 @@ export default function CatalogListPage({
         className="hidden"
         onChange={handleFileUpload}
       />
+
+      {productImportPreviewRows.length > 0 && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 px-4">
+          <div className="flex max-h-[82vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-gray-200 px-6 py-4">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">
+                  Review Products To Add
+                </h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Select only the products that should be imported.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeProductImportPreview}
+                className="rounded-lg px-2 py-1 text-2xl leading-none text-gray-500 hover:bg-gray-100"
+                aria-label="Close product import preview"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead className="sticky top-0 z-10 bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
+                  <tr>
+                    <th className="w-12 px-4 py-3 text-left">
+                      <input
+                        type="checkbox"
+                        checked={
+                          productImportPreviewRows.length > 0 &&
+                          productImportPreviewRows.every(
+                            (row) => productImportSelected[row.__previewId],
+                          )
+                        }
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setProductImportSelected(
+                            Object.fromEntries(
+                              productImportPreviewRows.map((row) => [
+                                row.__previewId,
+                                checked,
+                              ]),
+                            ),
+                          );
+                        }}
+                      />
+                    </th>
+                    <th className="px-4 py-3 text-left">S.NO</th>
+                    <th className="px-4 py-3 text-left">Product</th>
+                    <th className="px-4 py-3 text-left">SKU / Barcode</th>
+                    <th className="px-4 py-3 text-left">Category</th>
+                    <th className="px-4 py-3 text-left">Brand</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {productImportPreviewRows.map((row) => (
+                    <tr key={row.__previewId} className="hover:bg-gray-50">
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={!!productImportSelected[row.__previewId]}
+                          onChange={(event) =>
+                            setProductImportSelected((current) => ({
+                              ...current,
+                              [row.__previewId]: event.target.checked,
+                            }))
+                          }
+                        />
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-gray-700">
+                        {row.__serialNo}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-gray-900">
+                        {getProductPreviewName(row)}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {getProductPreviewSku(row) || "—"}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {row.Category || row.category || row.category_name || "—"}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {row.Brand || row.brand || row.brand_name || "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-gray-200 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-sm text-gray-600">
+                {
+                  productImportPreviewRows.filter(
+                    (row) => productImportSelected[row.__previewId],
+                  ).length
+                }{" "}
+                of {productImportPreviewRows.length} selected
+              </span>
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeProductImportPreview}
+                  className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmProductImportPreview}
+                  className="rounded-lg bg-red-600 px-5 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Import loading overlay */}
       {importing && (
