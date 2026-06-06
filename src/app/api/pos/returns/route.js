@@ -2,7 +2,7 @@ import { query } from '@/lib/db';
 import { successResponse, errorResponse } from '@/lib/api-response';
 import { extractAuthUser, requirePermission } from '@/lib/api-protection';
 import { ensureSalesReturnsSchema } from '@/lib/salesReturnsSchema';
-import { ensureInventoryBatchSchema, receiveBatchStock } from '@/lib/inventoryBatching';
+import { ensureInventoryBatchSchema, receiveBatchStock, restoreBatchStock } from '@/lib/inventoryBatching';
 
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -23,6 +23,17 @@ function canReviewReturn(user, storeId) {
 
 function canCompleteReturn(user, returnRow) {
   return Number(returnRow.created_by) === Number(user?.id) || canReviewReturn(user, returnRow.store_id);
+}
+
+function parseBatchAllocations(value) {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 // Create return/exchange
@@ -360,18 +371,59 @@ export async function PATCH(req) {
          RETURNING id`,
         [stockInId, item.product_id, item.product_name || 'Product', item.qty, item.original_price]
       );
-      await receiveBatchStock({
-        query,
-      }, {
-        stockInId,
-        stockInItemId: stockInItemRes.rows[0]?.id,
-        productId: item.product_id,
-        storeId: returnRow.store_id,
-        qty: item.qty,
-        costPrice: item.original_price,
-        batchNo: `RETURN-${returnId}-${item.product_id}`,
-        meta: { source: 'return-approval', returnId },
-      });
+
+      let remainingQty = toNumber(item.qty);
+      const billItemsRes = await query(
+        `SELECT id, batch_allocations
+         FROM sales_bill_items
+         WHERE sales_bill_id = $1
+           AND product_id = $2
+         ORDER BY id ASC`,
+        [returnRow.original_bill_id, item.product_id]
+      );
+
+      for (const billItem of billItemsRes.rows) {
+        if (remainingQty <= 0) break;
+        const allocations = parseBatchAllocations(billItem.batch_allocations);
+        for (const allocation of allocations) {
+          if (remainingQty <= 0) break;
+          const allocationQty = toNumber(allocation.qty);
+          const batchId = Number(allocation.batchId || allocation.batch_id);
+          if (!batchId || allocationQty <= 0) continue;
+
+          const restoreQty = Math.min(remainingQty, allocationQty);
+          const restored = await restoreBatchStock({
+            query,
+          }, {
+            batchId,
+            productId: item.product_id,
+            storeId: returnRow.store_id,
+            qty: restoreQty,
+            referenceType: 'sales_return',
+            referenceId: returnId,
+            sourceItemId: stockInItemRes.rows[0]?.id,
+            meta: { source: 'return-approval', returnId, originalBillId: returnRow.original_bill_id, originalBillItemId: billItem.id },
+          });
+          if (restored) {
+            remainingQty = Math.round((remainingQty - restoreQty) * 1000) / 1000;
+          }
+        }
+      }
+
+      if (remainingQty > 0) {
+        await receiveBatchStock({
+          query,
+        }, {
+          stockInId,
+          stockInItemId: stockInItemRes.rows[0]?.id,
+          productId: item.product_id,
+          storeId: returnRow.store_id,
+          qty: remainingQty,
+          costPrice: item.original_price,
+          batchNo: `RETURN-${returnId}-${item.product_id}`,
+          meta: { source: 'return-approval', returnId, originalBillId: returnRow.original_bill_id, fallback: true },
+        });
+      }
     }
 
     const approved = await query(

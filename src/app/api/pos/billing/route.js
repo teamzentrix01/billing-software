@@ -60,6 +60,10 @@ export async function POST(req) {
       const productId = Number(item.product_id || item.productId);
       const qty = toNumber(item.qty);
       if (!productId || qty <= 0) throw new Error('Invalid product or quantity');
+      const selectedBatchId = Number(item.selectedBatchId || item.selected_batch_id || item.batchId || item.batch_id || 0) || null;
+      const selectedBatchIds = (Array.isArray(item.selectedBatchIds) ? item.selectedBatchIds : [])
+        .map(Number)
+        .filter((id) => Number.isFinite(id) && id > 0);
 
       const productRes = await client.query(
         `SELECT p.id, p.name, p.sku, p.barcode, p.mrp, p.selling_price, p.cost_price,
@@ -88,7 +92,7 @@ export async function POST(req) {
       calculatedSubtotal += lineSubtotal;
       calculatedTax += lineTax;
       if (!product.include_tax) calculatedExclusiveTax += lineTax;
-      normalizedItems.push({ item, product, productId, qty, sellingPrice, taxRate, itemDiscount, lineTax, lineTotal });
+      normalizedItems.push({ item, product, productId, qty, sellingPrice, taxRate, itemDiscount, lineTax, lineTotal, selectedBatchId, selectedBatchIds });
     }
 
     const billNumber = invoice_number || `POS-${Date.now()}`;
@@ -177,6 +181,8 @@ export async function POST(req) {
         productId: row.productId,
         storeId: Number(store_id),
         qty: row.qty,
+        preferredBatchId: row.selectedBatchIds.length ? null : row.selectedBatchId,
+        allowedBatchIds: row.selectedBatchIds,
         strategy: issueStrategy,
         referenceType: 'sales_bill',
         referenceId: bill_id,

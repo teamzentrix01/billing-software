@@ -159,6 +159,11 @@ const DEFAULT_RECEIPT_CONFIG = {
 
 function normalizeProduct(p) {
   const selectedBatchId = p.selectedBatchId ?? p.selected_batch_id ?? null;
+  const selectedBatchIds = Array.isArray(p.selectedBatchIds)
+    ? p.selectedBatchIds
+    : Array.isArray(p.selected_batch_ids)
+      ? p.selected_batch_ids
+      : [];
   const sellingPrice = toNumber(p.selling_price || p.sellingPrice || p.mrp);
   const mrp = toNumber(p.mrp || p.selling_price || p.sellingPrice);
   const variantKey = String(
@@ -171,6 +176,7 @@ function normalizeProduct(p) {
     cartKey: variantKey,
     variantKey,
     selectedBatchId,
+    selectedBatchIds,
     name: p.name,
     sku: p.sku || '',
     barcode: p.barcode || '',
@@ -1180,6 +1186,7 @@ export default function POSPage() {
         items: cart.map((item) => ({
           productId: item.id, name: item.name, qty: item.qty, sellingPrice: item.sellingPrice,
           mrp: item.mrp, barcode: item.barcode, sku: item.sku, selectedBatchId: item.selectedBatchId,
+          selectedBatchIds: item.selectedBatchIds || [],
           taxRate: item.taxRate || 0, includeTax: item.includeTax,
           discountAmount: canManageDiscounts && item.allowDiscountOnPos ? toNumber(item.discountAmount) : 0,
         })),
@@ -1513,7 +1520,7 @@ export default function POSPage() {
                     key={product.variantKey || product.id}
                     onClick={() => addProduct(product)}
                     disabled={product.availableStock <= 0}
-                    className={`self-start relative text-left rounded-xl border p-2.5 transition-all group w-full min-w-0 ${
+                    className={`relative flex min-h-[104px] w-full min-w-0 flex-col overflow-hidden rounded-xl border p-2 text-left transition-all group ${
                       product.availableStock > 0
                         ? 'border-slate-200 hover:border-indigo-400 hover:shadow-md hover:shadow-indigo-100/60 bg-white cursor-pointer active:scale-[0.98]'
                         : 'border-slate-100 bg-slate-50/70 opacity-55 cursor-not-allowed'
@@ -1521,7 +1528,7 @@ export default function POSPage() {
                   >
                     {/* Top row: category + stock pill */}
                     <div className="mb-1.5 flex min-w-0 items-center justify-between gap-1">
-                      <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-md truncate leading-tight max-w-[65%]">
+                      <span className="max-w-[58%] truncate rounded-md bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold leading-tight text-slate-400">
                         {product.categoryName}
                       </span>
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md leading-tight shrink-0 ${
@@ -1536,14 +1543,14 @@ export default function POSPage() {
                     </div>
 
                     {/* Product name */}
-                    <p className="mb-1 line-clamp-2 min-h-[32px] text-xs font-bold leading-snug text-slate-800 transition-colors group-hover:text-indigo-700">
+                    <p className="line-clamp-2 min-h-[34px] text-[11px] font-black leading-snug text-slate-800 transition-colors group-hover:text-indigo-700 2xl:text-xs">
                       {product.name}
                     </p>
 
                     {/* SKU + Price row */}
-                    <div className="mt-1.5 flex min-w-0 items-center justify-between gap-1">
-                      <span className="text-[10px] text-slate-400 font-mono truncate">{product.sku}</span>
-                      <span className="shrink-0 text-xs font-black text-indigo-700 2xl:text-sm">
+                    <div className="mt-auto flex min-w-0 items-end justify-between gap-1 pt-2">
+                      <span className="min-w-0 truncate font-mono text-[9px] text-slate-400">{product.sku || product.barcode || '-'}</span>
+                      <span className="shrink-0 text-[11px] font-black text-indigo-700 2xl:text-xs">
                         ₹{toNumber(product.sellingPrice).toLocaleString('en-IN')}
                       </span>
                     </div>

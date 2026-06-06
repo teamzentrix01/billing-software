@@ -142,6 +142,10 @@ export async function POST(req) {
           const productId = Number(item.product_id || item.productId);
           const qty = toNumber(item.qty);
           if (!productId || qty <= 0) throw new Error('Invalid offline product or quantity');
+          const selectedBatchId = Number(item.selectedBatchId || item.selected_batch_id || item.batchId || item.batch_id || 0) || null;
+          const selectedBatchIds = (Array.isArray(item.selectedBatchIds) ? item.selectedBatchIds : [])
+            .map(Number)
+            .filter((id) => Number.isFinite(id) && id > 0);
 
           const productRes = await client.query(
             `SELECT id, name, sku, barcode, mrp, selling_price, cost_price
@@ -164,6 +168,8 @@ export async function POST(req) {
             productId,
             storeId: billStoreId,
             qty,
+            preferredBatchId: selectedBatchIds.length ? null : selectedBatchId,
+            allowedBatchIds: selectedBatchIds,
             strategy: issueStrategy,
             referenceType: 'sales_bill',
             referenceId: bill_id,
