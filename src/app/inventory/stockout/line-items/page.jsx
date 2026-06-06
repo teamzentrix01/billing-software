@@ -109,14 +109,16 @@ function LineItemsContent() {
 
   const addToCart = (product) => {
     const pid = product.id ?? product.product_id;
-    if (Number(product.availableStock || 0) <= 0) return;
+    const availableStock = Number(product.availableStock ?? product.available_stock ?? 0);
+    if (availableStock <= 0) return;
 
     setCart((current) => {
       const existing = current.find((item) => String(item.product_id) === String(pid));
       if (existing) {
+        const nextQty = Math.min(Number(existing.qty || 0) + 1, availableStock);
         return current.map((item) =>
           String(item.product_id) === String(pid)
-            ? { ...item, qty: Number(item.qty) + 1 }
+            ? { ...item, qty: nextQty }
             : item
         );
       }
@@ -131,6 +133,7 @@ function LineItemsContent() {
           sku: product.sku,
           cost_price: cost,
           tax_value: draft?.applyTaxes ? (cost * taxRate) / 100 : 0,
+          available_stock: availableStock,
           qty: 1,
         },
       ];
@@ -144,10 +147,22 @@ function LineItemsContent() {
     setCart((current) =>
       current.map((item) =>
         String(item.product_id) === String(productId)
-          ? { ...item, qty: Math.max(1, Number(qty) || 1) }
+          ? { ...item, qty: Math.min(Math.max(1, Number(qty) || 1), Number(item.available_stock || 1)) }
           : item
       )
     );
+  };
+
+  const validateCart = () => {
+    for (const item of cart) {
+      const qty = Number(item.qty || 0);
+      const available = Number(item.available_stock || 0);
+      if (available > 0 && qty > available) {
+        alert(`${item.name} only has ${available} available in this store.`);
+        return false;
+      }
+    }
+    return true;
   };
 
   const removeItem = (productId) => {
@@ -157,6 +172,7 @@ function LineItemsContent() {
   const confirm = async () => {
     if (!id) return alert('Missing stock out id');
     if (cart.length === 0) return alert('Add at least one product');
+    if (!validateCart()) return;
 
     setConfirming(true);
     try {
