@@ -523,7 +523,8 @@ function applyStockInExpiryDateFormat(XLSX, worksheet, rowLimit) {
   for (let rowNumber = 2; rowNumber <= rowLimit; rowNumber++) {
     const ref = `${column}${rowNumber}`;
     if (!worksheet[ref]) worksheet[ref] = { t: "s", v: "" };
-    worksheet[ref].z = "dd/mm/yy";
+    worksheet[ref].t = "s";
+    worksheet[ref].z = "@";
   }
 }
 

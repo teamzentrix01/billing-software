@@ -68,6 +68,16 @@ function normalizeRow(
 }
 
 function normalizeCellValue(value, cell = null) {
+  const displayed = String(cell?.w || "").trim();
+  if (
+    displayed &&
+    /^\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}$/.test(displayed)
+  ) {
+    return displayed;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value;
+  }
   if (typeof value === "number" && Number.isFinite(value)) {
     return Number.isInteger(value) ? String(value) : String(value);
   }
