@@ -62,12 +62,15 @@ function normalizeRow(
       sheet && XLSX && columnIndex >= 0
         ? sheet[XLSX.utils.encode_cell({ r: rowIndex + 1, c: columnIndex })]
         : null;
-    out[normalizeKey(key)] = normalizeCellValue(value, cell);
+    out[normalizeKey(key)] = normalizeCellValue(value, cell, XLSX);
   }
   return out;
 }
 
-function normalizeCellValue(value, cell = null) {
+function normalizeCellValue(value, cell = null, XLSX = null) {
+  const dateValue = getExcelDateValue(value, cell, XLSX);
+  if (dateValue) return dateValue;
+
   const displayed = String(cell?.w || "").trim();
   if (
     displayed &&
@@ -92,6 +95,40 @@ function normalizeCellValue(value, cell = null) {
     }
   }
   return normalized;
+}
+
+function getExcelDateValue(value, cell = null, XLSX = null) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  if (cell?.v instanceof Date) {
+    return Number.isNaN(cell.v.getTime()) ? null : cell.v;
+  }
+
+  if (
+    XLSX &&
+    cell &&
+    typeof cell.v === "number" &&
+    Number.isFinite(cell.v) &&
+    looksLikeExcelDateFormat(cell.z)
+  ) {
+    const parsed = XLSX.SSF.parse_date_code(cell.v);
+    if (!parsed) return null;
+    const date = new Date(parsed.y, parsed.m - 1, parsed.d);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  return null;
+}
+
+function looksLikeExcelDateFormat(format) {
+  if (!format) return false;
+  const normalized = String(format)
+    .replace(/\[[^\]]+\]/g, "")
+    .replace(/"[^"]*"/g, "")
+    .toLowerCase();
+  return /(^|[^a-z])[dmy]{1,4}([^a-z]|$)/.test(normalized);
 }
 
 function isBlankRow(row) {
