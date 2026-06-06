@@ -17,7 +17,7 @@ function toNumber(value, fallback = 0) {
 function toQty(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return 0;
-  return Math.trunc(parsed);
+  return Math.round(parsed * 1000) / 1000;
 }
 
 function normalizeDate(value) {
@@ -328,6 +328,22 @@ export async function POST(request, { params }) {
     try {
       await client.query('BEGIN');
       let marginApprovalCount = 0;
+
+      const lockedStockInRes = await client.query(
+        `SELECT id, status
+         FROM stock_in
+         WHERE id = $1
+         FOR UPDATE`,
+        [id]
+      );
+      if (!lockedStockInRes.rows.length) {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Stock in not found' }, { status: 404 });
+      }
+      if (String(lockedStockInRes.rows[0].status || '').toLowerCase() === 'confirmed') {
+        await client.query('ROLLBACK');
+        return NextResponse.json({ error: 'Already confirmed' }, { status: 409 });
+      }
 
       // ── 4. Replace line items — use catalog name as source of truth ─────────
       await client.query('DELETE FROM stock_in_items WHERE stock_in_id = $1', [id]);

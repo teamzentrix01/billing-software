@@ -31,6 +31,9 @@ export async function POST(request, { params }) {
       const qty = Number(item.qty || 0);
       const cost = Number(item.cost_price || 0);
       const tax = Number(item.tax_value || 0);
+      if (!Number(item.product_id)) {
+        return NextResponse.json({ error: 'Each item must have a product' }, { status: 400 });
+      }
       if (qty <= 0) {
         return NextResponse.json({ error: 'Quantity must be greater than zero' }, { status: 400 });
       }
@@ -43,7 +46,7 @@ export async function POST(request, { params }) {
     try {
       await client.query('BEGIN');
 
-      const draft = await client.query('SELECT id, status, method, destination_id, transaction_id FROM stock_out WHERE id = $1', [id]);
+      const draft = await client.query('SELECT id, status, method, destination_id, transaction_id FROM stock_out WHERE id = $1 FOR UPDATE', [id]);
       if (draft.rows.length === 0) {
         await client.query('ROLLBACK');
         return NextResponse.json({ error: 'Stock out not found' }, { status: 404 });
@@ -60,6 +63,20 @@ export async function POST(request, { params }) {
       if (storeCheck.error) {
         await client.query('ROLLBACK');
         return storeCheck.error;
+      }
+
+      const productIds = [...new Set(items.map((item) => Number(item.product_id)).filter(Boolean))];
+      const productsRes = productIds.length
+        ? await client.query('SELECT id, name FROM products WHERE id = ANY($1::int[])', [productIds])
+        : { rows: [] };
+      const productMap = new Map(productsRes.rows.map((row) => [Number(row.id), row]));
+      const missingProducts = productIds.filter((productId) => !productMap.has(productId));
+      if (missingProducts.length) {
+        await client.query('ROLLBACK');
+        return NextResponse.json(
+          { error: `Products not found in catalog: IDs ${missingProducts.join(', ')}` },
+          { status: 422 }
+        );
       }
 
       await client.query('DELETE FROM stock_out_items WHERE stock_out_id = $1', [id]);
@@ -84,7 +101,7 @@ export async function POST(request, { params }) {
             [
               id,
               item.product_id,
-              item.name || null,
+              productMap.get(Number(item.product_id))?.name || item.name || null,
               allocation.qty,
               allocation.costPrice || item.cost_price || 0,
               item.tax_value || 0,
@@ -140,6 +157,6 @@ export async function POST(request, { params }) {
     }
   } catch (err) {
     console.error('[stockout confirm]', err.message);
-    return NextResponse.json({ error: 'Failed to confirm stock out' }, { status: 500 });
+    return NextResponse.json({ error: err.message || 'Failed to confirm stock out' }, { status: 500 });
   }
 }
