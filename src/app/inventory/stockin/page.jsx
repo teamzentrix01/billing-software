@@ -567,44 +567,105 @@ function compactProductLookupValue(value) {
   return normalizeProductLookupValue(value).replace(/[^a-z0-9]/g, "");
 }
 
+function uniqueProductsById(products) {
+  const seen = new Set();
+  return (products || []).filter((product) => {
+    const key = String(product?.id || product?.productId || "");
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function findStockInTemplateProductMatchDetail(
+  products,
+  { productId, productName, barcode, sku },
+) {
+  const lookupProductId = normalizeProductLookupValue(productId);
+  const lookupBarcode = normalizeProductLookupValue(barcode);
+  const lookupSku = normalizeProductLookupValue(sku);
+  const lookupName = normalizeProductLookupValue(productName);
+  const compactProductId = compactProductLookupValue(productId);
+  const compactBarcode = compactProductLookupValue(barcode);
+  const compactSku = compactProductLookupValue(sku);
+  const compactName = compactProductLookupValue(productName);
+
+  const list = Array.isArray(products) ? products : [];
+  const matchBy = (values, normalizer, lookup) => {
+    if (!lookup) return [];
+    return uniqueProductsById(
+      list.filter((product) =>
+        values(product).map(normalizer).filter(Boolean).includes(lookup),
+      ),
+    );
+  };
+
+  const checks = [
+    [
+      "barcode",
+      (product) => [product.barcode],
+      normalizeProductLookupValue,
+      lookupBarcode,
+    ],
+    ["sku", (product) => [product.sku], normalizeProductLookupValue, lookupSku],
+    [
+      "barcode",
+      (product) => [product.barcode],
+      compactProductLookupValue,
+      compactBarcode,
+    ],
+    ["sku", (product) => [product.sku], compactProductLookupValue, compactSku],
+    [
+      "product_id",
+      (product) => [product.id, product.productId],
+      normalizeProductLookupValue,
+      lookupProductId,
+    ],
+    [
+      "product_id",
+      (product) => [product.id, product.productId],
+      compactProductLookupValue,
+      compactProductId,
+    ],
+    [
+      "name",
+      (product) => [product.productName],
+      normalizeProductLookupValue,
+      lookupName,
+    ],
+    [
+      "name",
+      (product) => [product.productName],
+      compactProductLookupValue,
+      compactName,
+    ],
+  ];
+
+  for (const [source, values, normalizer, lookup] of checks) {
+    const matches = matchBy(values, normalizer, lookup);
+    if (matches.length) {
+      return {
+        product: matches[0],
+        matches,
+        source,
+      };
+    }
+  }
+
+  return { product: null, matches: [], source: "" };
+}
+
 function findStockInTemplateProductMatch(
   products,
   { productId, productName, barcode, sku },
 ) {
-  const lookups = [
-    normalizeProductLookupValue(productId),
-    normalizeProductLookupValue(barcode),
-    normalizeProductLookupValue(sku),
-    normalizeProductLookupValue(productName),
-  ].filter(Boolean);
-  const compactLookups = lookups.map(compactProductLookupValue).filter(Boolean);
-
-  for (const product of products || []) {
-    const identifiers = [
-      product.id,
-      product.productId,
-      product.barcode,
-      product.sku,
-      product.productName,
-    ];
-    const normalizedIdentifiers = identifiers
-      .map(normalizeProductLookupValue)
-      .filter(Boolean);
-    if (lookups.some((lookup) => normalizedIdentifiers.includes(lookup))) {
-      return product;
-    }
-
-    const compactIdentifiers = identifiers
-      .map(compactProductLookupValue)
-      .filter(Boolean);
-    if (
-      compactLookups.some((lookup) => compactIdentifiers.includes(lookup))
-    ) {
-      return product;
-    }
-  }
-
-  return null;
+  return findStockInTemplateProductMatchDetail(products, {
+    productId,
+    productName,
+    barcode,
+    sku,
+  }).product;
 }
 
 // ─── Destination Picker Modal ────────────────────────────────────────────────
@@ -764,10 +825,18 @@ export default function StockInPage() {
     source: "",
   });
   const [pendingMissingProduct, setPendingMissingProduct] = useState(null);
+  const [bulkImportIssue, setBulkImportIssue] = useState(null);
   const [bulkPreviewRows, setBulkPreviewRows] = useState([]);
   const [bulkPreviewSelected, setBulkPreviewSelected] = useState({});
   const [stockPreview, setStockPreview] = useState(null);
   const [loadingStockPreview, setLoadingStockPreview] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [deleteDialog, setDeleteDialog] = useState({
+    open: false,
+    row: null,
+    loading: false,
+    error: "",
+  });
 
   // ── NEW: state for destination picker modal (bulk import flow) ──
   const [destinationPickerRows, setDestinationPickerRows] = useState(null);
@@ -777,11 +846,19 @@ export default function StockInPage() {
   const fileInputRef = useRef(null);
   const router = useRouter();
   const destinationStores = stores;
+  const isSuperAdmin = currentUser?.role === "super_admin";
   const filteredVendors = vendors.filter((vendor) =>
     `${vendor.name || ""} ${vendor.company || ""}`
       .toLowerCase()
       .includes(vendorQuery.trim().toLowerCase()),
   );
+
+  useEffect(() => {
+    fetch("/api/auth/me", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((json) => setCurrentUser(json.data?.user || json.user || null))
+      .catch(() => setCurrentUser(null));
+  }, []);
 
   useEffect(() => {
     setLoadingList(true);
@@ -818,9 +895,7 @@ export default function StockInPage() {
       fetch("/api/vendors?pageSize=1000")
         .then((r) => r.json())
         .catch(() => []),
-      fetchCatalogOptions("/api/catalog/brands?pageSize=1000").catch(
-        () => [],
-      ),
+      fetchCatalogOptions("/api/catalog/brands?pageSize=1000").catch(() => []),
       fetchCatalogOptions("/api/catalog/categories?pageSize=1000").catch(
         () => [],
       ),
@@ -988,6 +1063,7 @@ export default function StockInPage() {
       alert("No rows found in selected file.");
       return;
     }
+    setBulkImportIssue(null);
 
     const templateRes = await fetch(
       "/api/inventory/stockin?template=products",
@@ -1068,11 +1144,7 @@ export default function StockInPage() {
           ),
         );
         if (!Number.isFinite(qty) || qty <= 0) return null;
-        const templateRowProduct =
-          Number.isInteger(row.__row_index) && row.__row_index >= 0
-            ? existingProducts[row.__row_index]
-            : existingProducts[index];
-        const matchedProduct = findStockInTemplateProductMatch(
+        const matchDetail = findStockInTemplateProductMatchDetail(
           existingProducts,
           {
             productId,
@@ -1080,12 +1152,49 @@ export default function StockInPage() {
             barcode,
             sku,
           },
-        ) || templateRowProduct;
+        );
+        const matchedProduct = matchDetail.product;
+        const rowNumber = Number(row.__row_index || 0) + 2;
         if (!matchedProduct) {
           return {
             missing: true,
             originalRow: row,
-            productName: productName || productId || barcode || sku || "Row " + (index + 2),
+            productName:
+              productName ||
+              productId ||
+              barcode ||
+              sku ||
+              "Row " + (index + 2),
+          };
+        }
+        if (matchDetail.matches.length > 1) {
+          return {
+            import_error: true,
+            row_number: rowNumber,
+            productName: productName || matchedProduct.productName || "",
+            sku,
+            barcode,
+            message: `Barcode/SKU matches ${matchDetail.matches.length} catalog products. Please keep a unique barcode/SKU before stock-in.`,
+          };
+        }
+        const sheetName = compactProductLookupValue(productName);
+        const catalogName = compactProductLookupValue(
+          matchedProduct.productName,
+        );
+        if (
+          ["barcode", "sku"].includes(matchDetail.source) &&
+          sheetName &&
+          catalogName &&
+          sheetName !== catalogName
+        ) {
+          return {
+            import_error: true,
+            row_number: rowNumber,
+            productName,
+            catalogName: matchedProduct.productName || "",
+            sku,
+            barcode,
+            message: `Excel product name does not match catalog for this ${matchDetail.source}.`,
           };
         }
         const expiryDate = normalizeImportDate(
@@ -1102,7 +1211,8 @@ export default function StockInPage() {
           preview_id: `${matchedProduct.id}-${index}`,
           product_id: matchedProduct.id,
           product_name: matchedProduct.productName || productName || "",
-          sku: matchedProduct.sku || sku || matchedProduct.barcode || "",
+          barcode: barcode || matchedProduct.barcode || "",
+          sku: sku || matchedProduct.sku || matchedProduct.barcode || "",
           qty,
           cost_price:
             parseBulkNumber(
@@ -1112,6 +1222,13 @@ export default function StockInPage() {
                 0,
               ),
             ) || 0,
+          mrp:
+            parseBulkNumber(getBulkField(row, ["mrp"], 0)) ||
+            Number(matchedProduct.mrp || 0),
+          selling_price:
+            parseBulkNumber(
+              getBulkField(row, ["selling_price", "sale_price", "sp"], 0),
+            ) || Number(matchedProduct.sellingPrice || 0),
           tax_value: 0,
           batch_no: batchNo,
           expiry_date: expiryDate,
@@ -1126,6 +1243,18 @@ export default function StockInPage() {
         };
       })
       .filter(Boolean);
+
+    const importErrors = selectedRows.filter((row) => row.import_error);
+    if (importErrors.length) {
+      setBulkImportIssue({
+        title: "Bulk import needs correction",
+        message:
+          "Some Excel rows do not match the catalog data. Please correct these rows and upload again so stock is not added to the wrong product.",
+        rows: importErrors.slice(0, 8),
+        extraCount: Math.max(0, importErrors.length - 8),
+      });
+      return;
+    }
 
     const missingProduct = selectedRows.find((row) => row.missing);
     if (missingProduct) {
@@ -1174,9 +1303,13 @@ export default function StockInPage() {
     if (!row?._id) return;
     setLoadingStockPreview(true);
     try {
-      const res = await fetch(`/api/inventory/stockin/${encodeURIComponent(row._id)}`, { cache: "no-store" });
+      const res = await fetch(
+        `/api/inventory/stockin/${encodeURIComponent(row._id)}`,
+        { cache: "no-store" },
+      );
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to load stock in preview");
+      if (!res.ok)
+        throw new Error(data.error || "Failed to load stock in preview");
       setStockPreview(data);
     } catch (err) {
       alert(err.message || "Failed to load stock in preview");
@@ -1187,7 +1320,50 @@ export default function StockInPage() {
 
   const editStockIn = (row) => {
     if (!row?._id) return;
-    router.push(`/inventory/stockin/line-items?id=${encodeURIComponent(row._id)}`);
+    router.push(
+      `/inventory/stockin/line-items?id=${encodeURIComponent(row._id)}`,
+    );
+  };
+
+  const deleteStockIn = async (row) => {
+    if (!row?._id) return;
+    setDeleteDialog({ open: true, row, loading: false, error: "" });
+  };
+
+  const closeDeleteDialog = () => {
+    setDeleteDialog((current) =>
+      current.loading
+        ? current
+        : { open: false, row: null, loading: false, error: "" },
+    );
+  };
+
+  const confirmDeleteStockIn = async () => {
+    const row = deleteDialog.row;
+    if (!row?._id) return;
+    setDeleteDialog((current) => ({ ...current, loading: true, error: "" }));
+    try {
+      const res = await fetch(
+        `/api/inventory/stockin/${encodeURIComponent(row._id)}`,
+        {
+          method: "DELETE",
+        },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to delete stock in");
+      setDeleteDialog({ open: false, row: null, loading: false, error: "" });
+      setLoadingList(true);
+      fetchStockInList(filters)
+        .then((records) => setTableData(mapRecordsToTable(records)))
+        .catch(() => setTableData([]))
+        .finally(() => setLoadingList(false));
+    } catch (err) {
+      setDeleteDialog((current) => ({
+        ...current,
+        loading: false,
+        error: err.message || "Failed to delete stock in",
+      }));
+    }
   };
 
   const handleDownloadBulkTemplate = async () => {
@@ -1523,34 +1699,101 @@ export default function StockInPage() {
         tableHeaders={tableHeaders}
         tableData={loadingList ? [] : tableData}
         emptyMessage={loadingList ? "Loading records…" : "No Records Found"}
-        rowActions={(row) => (
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => openStockPreview(row)}
-              className="rounded-lg border border-blue-100 px-3 py-1.5 text-[12px] font-semibold text-blue-700 hover:bg-blue-50"
-            >
-              Preview
-            </button>
-            <button
-              type="button"
-              onClick={() => editStockIn(row)}
-              className="rounded-lg border border-red-100 px-3 py-1.5 text-[12px] font-semibold text-red-700 hover:bg-red-50"
-            >
-              Edit
-            </button>
-          </div>
-        )}
+        rowActions={(row) =>
+          isSuperAdmin ? (
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => openStockPreview(row)}
+                className="rounded-lg border border-blue-100 px-3 py-1.5 text-[12px] font-semibold text-blue-700 hover:bg-blue-50"
+              >
+                Preview
+              </button>
+              <button
+                type="button"
+                onClick={() => editStockIn(row)}
+                className="rounded-lg border border-red-100 px-3 py-1.5 text-[12px] font-semibold text-red-700 hover:bg-red-50"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteStockIn(row)}
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-[12px] font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Delete
+              </button>
+            </div>
+          ) : null
+        }
       />
+
+      {deleteDialog.open && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/45 px-4">
+          <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="border-b border-gray-100 px-6 py-5">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600">
+                  <i className="ti ti-trash text-[20px]" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    Delete stock in?
+                  </h3>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {deleteDialog.row?.["Transaction ID"] || "This stock in"}{" "}
+                    will be permanently removed if its quantity has not been
+                    used.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-5">
+              <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+                This action cannot be undone. Used stock-in records will be
+                protected automatically.
+              </div>
+              {deleteDialog.error && (
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  {deleteDialog.error}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-gray-100 px-6 py-4">
+              <button
+                type="button"
+                onClick={closeDeleteDialog}
+                disabled={deleteDialog.loading}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteStockIn}
+                disabled={deleteDialog.loading}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleteDialog.loading ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {(stockPreview || loadingStockPreview) && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 px-4">
           <div className="flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="flex items-start justify-between border-b border-gray-200 px-6 py-4">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">Stock In Preview</h3>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Stock In Preview
+                </h3>
                 <p className="mt-1 text-sm text-gray-500">
-                  {stockPreview?.transactionId || "Loading..."} · {stockPreview?.destinationName || ""}
+                  {stockPreview?.transactionId || "Loading..."} ·{" "}
+                  {stockPreview?.destinationName || ""}
                 </p>
               </div>
               <button
@@ -1562,14 +1805,28 @@ export default function StockInPage() {
               </button>
             </div>
             <div className="grid gap-3 border-b border-gray-100 px-6 py-4 text-sm text-gray-600 sm:grid-cols-4">
-              <div><span className="block text-xs text-gray-400">Invoice</span>{stockPreview?.invoice_number || "—"}</div>
-              <div><span className="block text-xs text-gray-400">Date</span>{formatDate(stockPreview?.invoice_date)}</div>
-              <div><span className="block text-xs text-gray-400">Source</span>{stockPreview?.referenceType || "—"}</div>
-              <div><span className="block text-xs text-gray-400">Status</span>{stockPreview?.status || "—"}</div>
+              <div>
+                <span className="block text-xs text-gray-400">Invoice</span>
+                {stockPreview?.invoice_number || "—"}
+              </div>
+              <div>
+                <span className="block text-xs text-gray-400">Date</span>
+                {formatDate(stockPreview?.invoice_date)}
+              </div>
+              <div>
+                <span className="block text-xs text-gray-400">Source</span>
+                {stockPreview?.referenceType || "—"}
+              </div>
+              <div>
+                <span className="block text-xs text-gray-400">Status</span>
+                {stockPreview?.status || "—"}
+              </div>
             </div>
             <div className="overflow-auto p-4">
               {loadingStockPreview ? (
-                <div className="py-16 text-center text-sm text-gray-500">Loading preview...</div>
+                <div className="py-16 text-center text-sm text-gray-500">
+                  Loading preview...
+                </div>
               ) : (
                 <table className="w-full min-w-[820px]">
                   <thead>
@@ -1585,14 +1842,25 @@ export default function StockInPage() {
                   </thead>
                   <tbody>
                     {(stockPreview?.items || []).map((item) => (
-                      <tr key={item.id} className="border-b border-gray-50 text-[13px] text-gray-700">
-                        <td className="px-3 py-2 font-semibold text-gray-900">{item.name}</td>
+                      <tr
+                        key={item.id}
+                        className="border-b border-gray-50 text-[13px] text-gray-700"
+                      >
+                        <td className="px-3 py-2 font-semibold text-gray-900">
+                          {item.name}
+                        </td>
                         <td className="px-3 py-2">{item.sku || "—"}</td>
                         <td className="px-3 py-2">{item.batch_no || "—"}</td>
                         <td className="px-3 py-2">{item.qty}</td>
-                        <td className="px-3 py-2">{formatCost(item.cost_price)}</td>
-                        <td className="px-3 py-2">{formatCost(item.tax_value)}</td>
-                        <td className="px-3 py-2">{formatDate(item.expiry_date)}</td>
+                        <td className="px-3 py-2">
+                          {formatCost(item.cost_price)}
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatCost(item.tax_value)}
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatDate(item.expiry_date)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1612,6 +1880,75 @@ export default function StockInPage() {
         />
       )}
 
+      {bulkImportIssue && (
+        <div className="fixed inset-0 z-[88] flex items-center justify-center bg-black/40 px-4">
+          <div className="flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-gray-200 px-6 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {bulkImportIssue.title}
+                </h3>
+                <p className="mt-1 text-sm text-gray-600">
+                  {bulkImportIssue.message}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBulkImportIssue(null)}
+                className="rounded-lg p-2 text-gray-500 hover:bg-gray-100"
+                title="Close"
+              >
+                <i className="ti ti-x text-[18px]" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto p-6">
+              <div className="space-y-3">
+                {bulkImportIssue.rows.map((row, index) => (
+                  <div
+                    key={`${row.row_number || index}-${row.sku || row.barcode || index}`}
+                    className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm"
+                  >
+                    <div className="font-semibold text-red-800">
+                      Row {row.row_number}: {row.message}
+                    </div>
+                    <div className="mt-2 grid gap-2 text-gray-700 sm:grid-cols-2">
+                      <div>
+                        Excel product:{" "}
+                        <span className="font-medium">
+                          {row.productName || "-"}
+                        </span>
+                      </div>
+                      {row.catalogName && (
+                        <div>
+                          Catalog product:{" "}
+                          <span className="font-medium">{row.catalogName}</span>
+                        </div>
+                      )}
+                      <div>Barcode: {row.barcode || "-"}</div>
+                      <div>SKU: {row.sku || "-"}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {bulkImportIssue.extraCount > 0 && (
+                <p className="mt-4 text-sm text-gray-500">
+                  Plus {bulkImportIssue.extraCount} more row(s).
+                </p>
+              )}
+            </div>
+            <div className="flex items-center justify-end border-t border-gray-200 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => setBulkImportIssue(null)}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {bulkPreviewRows.length > 0 && (
         <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/40 px-4">
           <div className="flex max-h-[82vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
@@ -1621,7 +1958,8 @@ export default function StockInPage() {
                   Review Products To Add
                 </h3>
                 <p className="mt-1 text-sm text-gray-500">
-                  Select only the products that should be added to this stock in.
+                  Select only the products that should be added to this stock
+                  in.
                 </p>
               </div>
               <button
@@ -1664,6 +2002,7 @@ export default function StockInPage() {
                       </label>
                     </th>
                     <th className="px-4 py-3 text-left">Product</th>
+                    <th className="px-4 py-3 text-left">Barcode</th>
                     <th className="px-4 py-3 text-left">SKU</th>
                     <th className="px-4 py-3 text-right">Qty</th>
                     <th className="px-4 py-3 text-right">Cost</th>
@@ -1697,7 +2036,12 @@ export default function StockInPage() {
                         </label>
                       </td>
                       <td className="px-4 py-3 font-medium text-gray-900">
-                        {row.product_name || row.name || `Product ${row.product_id}`}
+                        {row.product_name ||
+                          row.name ||
+                          `Product ${row.product_id}`}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {row.barcode || "-"}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
                         {row.sku || "—"}
@@ -1716,7 +2060,12 @@ export default function StockInPage() {
             </div>
             <div className="flex items-center justify-between border-t border-gray-200 px-6 py-4">
               <span className="text-sm text-gray-600">
-                {bulkPreviewRows.filter((row) => bulkPreviewSelected[row.preview_id]).length} of {bulkPreviewRows.length} selected
+                {
+                  bulkPreviewRows.filter(
+                    (row) => bulkPreviewSelected[row.preview_id],
+                  ).length
+                }{" "}
+                of {bulkPreviewRows.length} selected
               </span>
               <div className="flex gap-3">
                 <button
@@ -1838,9 +2187,7 @@ export default function StockInPage() {
                       ))}
                     </div>
                   ) : (
-                    <p className="text-sm text-gray-500">
-                      No brands found.
-                    </p>
+                    <p className="text-sm text-gray-500">No brands found.</p>
                   )}
                 </div>
               </div>

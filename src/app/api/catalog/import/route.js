@@ -83,6 +83,9 @@ function normalizeProductImportRow(row = {}) {
     sub_catalogy: "sub_category_name",
     sub_category_name: "sub_category_name",
     income_head: "income_head_name",
+    exempt: "exempt",
+    tax_exempt: "exempt",
+    is_exempt: "exempt",
     price_includes_tax: "include_tax",
     gst_included: "include_tax",
     manage_inventory: "manage_inventory_enabled",
@@ -133,7 +136,9 @@ function normalizeProductImportRow(row = {}) {
     return acc;
   }, {});
 
-  const includeTax = toBoolean(normalized.include_tax, false);
+  const exempt = toBoolean(normalized.exempt, false);
+  const includeTax = exempt ? false : toBoolean(normalized.include_tax, false);
+  normalized.exempt = exempt;
   normalized.include_tax = includeTax;
 
   for (const taxColumn of PRODUCT_TAX_COLUMNS) {
@@ -141,7 +146,7 @@ function normalizeProductImportRow(row = {}) {
     normalized[key] = toBoolean(normalized[key], false);
   }
 
-  if (!includeTax) {
+  if (exempt || !includeTax) {
     normalized.tax_name = "";
   }
 
@@ -425,7 +430,10 @@ function parseStoreSaleabilityFromRow(row = {}) {
     sellingPrice: toNumber(fields.selling_price, 0),
     mrp: toNumber(fields.mrp, 0),
     lowStockValue: toNumber(fields.low_stock_value ?? fields.low_stock_qty, 0),
-    minimumBaseQuantity: toNumber(fields.minimum_base_quantity ?? fields.mbq, 0),
+    minimumBaseQuantity: toNumber(
+      fields.minimum_base_quantity ?? fields.mbq,
+      0,
+    ),
   }));
 }
 
@@ -507,7 +515,8 @@ async function insertProductWithIntegrations(client, row, user) {
     "stores",
     row.inventory_store_name,
   );
-  const includeTax = toBoolean(row.include_tax, false);
+  const exempt = toBoolean(row.exempt, false);
+  const includeTax = exempt ? false : toBoolean(row.include_tax, false);
   const taxName = includeTax ? row.tax_name : "";
   const taxId = await resolveTaxIdForImport(client, taxName);
   const barcode = nullableText(row.barcode);
@@ -669,6 +678,7 @@ async function insertProductWithIntegrations(client, row, user) {
               row.allow_variable_pricing,
               false,
             ),
+            exempt,
             include_tax: includeTax,
             charge_name: nullableText(row.charge_name),
             selected_color: nullableText(row.selected_color),
@@ -721,7 +731,11 @@ async function insertProductWithIntegrations(client, row, user) {
     );
   }
 
-  if (manageInventoryEnabled && inventoryStoreId && !saleabilityStoreIds.has(Number(inventoryStoreId))) {
+  if (
+    manageInventoryEnabled &&
+    inventoryStoreId &&
+    !saleabilityStoreIds.has(Number(inventoryStoreId))
+  ) {
     await client.query(
       `INSERT INTO product_saleability (product_id, store_id, is_active, selling_price, mrp, low_stock_value, minimum_base_quantity)
        VALUES ($1, $2, true, $3, $4, $5, $6)

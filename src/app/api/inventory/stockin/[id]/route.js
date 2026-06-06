@@ -53,6 +53,76 @@ async function clearConfirmedStockInBatches(client, stockInId) {
   );
 }
 
+async function deleteConfirmedStockInBatches(client, stockInId) {
+  await ensureInventoryBatchSchema();
+
+  const oldItemsRes = await client.query(
+    `SELECT id FROM stock_in_items WHERE stock_in_id = $1`,
+    [stockInId]
+  );
+  const oldItemIds = oldItemsRes.rows.map((row) => String(row.id));
+  if (!oldItemIds.length) return;
+
+  const batchRes = await client.query(
+    `SELECT id, product_id, store_id, received_qty, available_qty, meta
+     FROM inventory_batches
+     WHERE source_type = 'stock_in'
+       AND source_id = ANY($1::text[])
+     FOR UPDATE`,
+    [oldItemIds]
+  );
+
+  const consumedBatch = batchRes.rows.find(
+    (batch) => Number(batch.available_qty || 0) < Number(batch.received_qty || 0)
+  );
+  if (consumedBatch) {
+    throw new Error('This stock in cannot be deleted because some quantity has already been used.');
+  }
+
+  for (const batch of batchRes.rows) {
+    const sourceBatchId = Number(batch.meta?.sourceBatchId || 0);
+    const qty = Number(batch.received_qty || 0);
+    if (sourceBatchId && qty > 0) {
+      const restoredRes = await client.query(
+        `UPDATE inventory_batches
+         SET available_qty = available_qty + $1,
+             status = 'active',
+             updated_at = NOW()
+         WHERE id = $2
+         RETURNING id, product_id, store_id`,
+        [qty, sourceBatchId]
+      );
+      const restored = restoredRes.rows[0];
+      if (restored) {
+        await client.query(
+          `INSERT INTO inventory_batch_movements (
+             batch_id, product_id, store_id, direction, qty, reference_type, reference_id, source_item_id, meta
+           ) VALUES ($1, $2, $3, 'in', $4, 'stock_in_delete_restore', $5, NULL, $6::jsonb)`,
+          [
+            restored.id,
+            restored.product_id,
+            restored.store_id,
+            qty,
+            String(stockInId),
+            JSON.stringify({ deletedDestinationBatchId: Number(batch.id) }),
+          ]
+        );
+      }
+    }
+  }
+
+  const batchIds = batchRes.rows.map((batch) => Number(batch.id)).filter(Boolean);
+  if (!batchIds.length) return;
+
+  await client.query(
+    `DELETE FROM inventory_batch_movements
+     WHERE batch_id = ANY($1::bigint[])
+       OR (reference_type IN ('stock_in', 'stock_in_to_store') AND reference_id = $2)`,
+    [batchIds, String(stockInId)]
+  );
+  await client.query(`DELETE FROM inventory_batches WHERE id = ANY($1::bigint[])`, [batchIds]);
+}
+
 export async function GET(request, { params }) {
   const { id } = await params;
   try {
@@ -88,9 +158,11 @@ export async function GET(request, { params }) {
               p.sku, p.barcode, p.product_id AS catalog_product_id,
               sii.qty, sii.cost_price, sii.tax_value, sii.batch_no, sii.mfg_date, sii.expiry_date,
               COALESCE(NULLIF(sii.mrp, 0), p.mrp, 0) AS mrp,
-              COALESCE(NULLIF(sii.selling_price, 0), p.selling_price, 0) AS selling_price
+              COALESCE(NULLIF(sii.selling_price, 0), p.selling_price, 0) AS selling_price,
+              COALESCE(t.rate, 0) AS tax_rate
        FROM stock_in_items sii
        LEFT JOIN products p ON p.id = sii.product_id
+       LEFT JOIN taxes t ON t.id = p.tax_id
        WHERE sii.stock_in_id = $1
        ORDER BY sii.id`,
       [id]
@@ -120,7 +192,7 @@ export async function GET(request, { params }) {
         sku: item.sku || item.barcode || item.catalog_product_id || '',
         qty: Number(item.qty || 0),
         cost_price: Number(item.cost_price || 0),
-        tax_value: Number(item.tax_value || 0),
+        tax_value: Number(item.tax_value || (row.apply_taxes ? (Number(item.cost_price || 0) * Number(item.tax_rate || 0)) / 100 : 0)),
         mrp: Number(item.mrp || 0),
         selling_price: Number(item.selling_price || 0),
         batch_no: item.batch_no || '',
@@ -262,6 +334,47 @@ export async function PUT(request, { params }) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('[stockin PUT id]', err.message);
     return NextResponse.json({ error: err.message || 'Failed to update stock in' }, { status: 500 });
+  } finally {
+    client.release();
+  }
+}
+
+export async function DELETE(request, { params }) {
+  const { id } = await params;
+  const client = await getClient();
+  try {
+    await ensureStockInSchema();
+    await ensureInventoryBatchSchema();
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    if (auth.user?.role !== 'super_admin') {
+      return NextResponse.json({ error: 'Only super admin can delete stock in records' }, { status: 403 });
+    }
+
+    await client.query('BEGIN');
+    const stockInRes = await client.query(
+      `SELECT id, status, destination_id FROM stock_in WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    const stockIn = stockInRes.rows[0];
+    if (!stockIn) {
+      await client.query('ROLLBACK');
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    if (String(stockIn.status || '').toLowerCase() === 'confirmed') {
+      await deleteConfirmedStockInBatches(client, id);
+    }
+
+    await client.query(`UPDATE vendor_invoices SET stock_in_id = NULL WHERE stock_in_id = $1`, [id]).catch(() => {});
+    await client.query(`UPDATE margin_approval_requests SET stock_in_id = NULL, stock_in_item_id = NULL WHERE stock_in_id = $1`, [id]).catch(() => {});
+    await client.query(`DELETE FROM stock_in WHERE id = $1`, [id]);
+    await client.query('COMMIT');
+    return NextResponse.json({ success: true, id });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[stockin DELETE id]', err.message);
+    return NextResponse.json({ error: err.message || 'Failed to delete stock in' }, { status: 500 });
   } finally {
     client.release();
   }

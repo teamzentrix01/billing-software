@@ -194,7 +194,13 @@ export default function CatalogListPage({
     "Unnamed product";
 
   const getProductPreviewSku = (row) =>
-    row.SKU || row.sku || row.Barcode || row.barcode || row["Product Code"] || row.product_id || "";
+    row.SKU ||
+    row.sku ||
+    row.Barcode ||
+    row.barcode ||
+    row["Product Code"] ||
+    row.product_id ||
+    "";
 
   const importBulkRows = async (rowsToImport) => {
     if (!rowsToImport.length) {
@@ -342,6 +348,7 @@ export default function CatalogListPage({
         "Sub Category",
         "Income Head",
         "Unit",
+        "Exempt",
         "Price Includes Tax",
         "Manage Inventory",
         "Stock Item Type",
@@ -404,6 +411,7 @@ export default function CatalogListPage({
         "Sub Category": "sub_category_name",
         "Income Head": "income_head_name",
         Unit: "unit",
+        Exempt: "exempt",
         "Price Includes Tax": "include_tax",
         "Manage Inventory": "manage_inventory_enabled",
         "Stock Item Type": "stock_item_type",
@@ -425,7 +433,9 @@ export default function CatalogListPage({
         "Disable Sales On Expiry": "disable_sales_on_expiry",
         "Inventory Method": "inventory_method",
       };
-      const dataRows = (bulkImportType === "products" ? [] : templateRecords).map((record) =>
+      const dataRows = (
+        bulkImportType === "products" ? [] : templateRecords
+      ).map((record) =>
         headers.map((header) => {
           const normalizedHeader = cleanHeader(header);
           const value = getTemplateCellValue(
@@ -505,6 +515,7 @@ export default function CatalogListPage({
       const inventoryMethodCol = headerIndex("Inventory Method");
       const stockTypeCol = headerIndex("Stock Item Type");
       const booleanCols = [
+        "Exempt",
         "Price Includes Tax",
         "Manage Inventory",
         "Is Sellable On POS",
@@ -570,8 +581,18 @@ export default function CatalogListPage({
           ["Product Name", "Required"],
           ["Selling Price", "Required"],
           ["Unit", "Required: PCS, KG, GRAMS, or LTR"],
-          ["Low Stock Qty", "Triggers low stock alerts and ARS reorder suggestions."],
-          ["MBQ", "Minimum base quantity. Example: use 0.65 for 650gm when Unit is KG."],
+          [
+            "Low Stock Qty",
+            "Triggers low stock alerts and ARS reorder suggestions.",
+          ],
+          [
+            "MBQ",
+            "Minimum base quantity. Example: use 0.65 for 650gm when Unit is KG.",
+          ],
+          [
+            "Exempt",
+            "Yes/No. Use Yes when the product should not have any GST/tax applied.",
+          ],
           [
             "include_tax",
             "Yes/No. Use Yes when GST is already included in selling_price.",
@@ -869,7 +890,10 @@ export default function CatalogListPage({
                         {getProductPreviewSku(row) || "—"}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
-                        {row.Category || row.category || row.category_name || "—"}
+                        {row.Category ||
+                          row.category ||
+                          row.category_name ||
+                          "—"}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
                         {row.Brand || row.brand || row.brand_name || "—"}
