@@ -120,83 +120,8 @@ export async function GET(request) {
     }
 
     if (source === 'vendor') {
-      if (!vendorIds.length) {
-        const records = await fetchCatalogProducts({ search, pageSize, brandId, brandName });
-        return successResponse({ records });
-      }
-
-      const params = [vendorIds];
-      const filters = [`COALESCE(p.is_active, TRUE) = TRUE`];
-      if (search) {
-        params.push(`%${search}%`);
-        filters.push(`(
-          COALESCE(p.name, '') ILIKE $${params.length}
-          OR COALESCE(p.sku, '') ILIKE $${params.length}
-          OR COALESCE(p.barcode, '') ILIKE $${params.length}
-          OR COALESCE(p.product_id, '') ILIKE $${params.length}
-        )`);
-      }
-      addBrandFilter(filters, params, { brandId, brandName });
-      params.push(pageSize);
-
-      const res = await query(
-        `WITH vendor_products AS (
-           SELECT
-             sii.product_id,
-             MAX(sii.cost_price) AS last_cost_price,
-             MAX(si.confirmed_at) AS last_supplied_at,
-             STRING_AGG(DISTINCT COALESCE(v.name, si.vendor_name), ', ') AS vendor_names
-           FROM stock_in si
-           INNER JOIN stock_in_items sii ON sii.stock_in_id = si.id
-           LEFT JOIN vendors v ON v.id = si.vendor_id
-           WHERE si.status = 'confirmed'
-             AND (
-               si.vendor_id = ANY($1::int[])
-               OR EXISTS (
-                 SELECT 1 FROM vendors selected_v
-                 WHERE selected_v.id = ANY($1::int[])
-                   AND LOWER(selected_v.name) = LOWER(COALESCE(si.vendor_name, ''))
-               )
-             )
-           GROUP BY sii.product_id
-         )
-         SELECT
-           p.id,
-           p.product_id,
-           p.name,
-           p.sku,
-           p.barcode,
-           p.mrp,
-           p.selling_price,
-           COALESCE(vp.last_cost_price, p.cost_price, 0) AS cost_price,
-           c.name AS "categoryName",
-           b.name AS "brandName",
-           COALESCE(t.rate, 0) AS "taxRate",
-           0::numeric AS "availableStock",
-           vp.vendor_names,
-           vp.last_supplied_at
-         FROM vendor_products vp
-         INNER JOIN products p ON p.id = vp.product_id
-         LEFT JOIN categories c ON c.id = p.category_id
-         LEFT JOIN brands b ON b.id = p.brand_id
-         LEFT JOIN taxes t ON t.id = p.tax_id
-         WHERE ${filters.join(' AND ')}
-         ORDER BY p.name ASC
-         LIMIT $${params.length}`,
-        params
-      );
-
-      const records = res.rows.map((row) => ({
-          ...row,
-          cost_price: toNumber(row.cost_price),
-          availableStock: 0,
-        }));
-
-      if (records.length) return successResponse({ records });
-
-      return successResponse({
-        records: await fetchCatalogProducts({ search, pageSize, vendorIds, brandId, brandName }),
-      });
+      const records = await fetchCatalogProducts({ search, pageSize, vendorIds, brandId, brandName });
+      return successResponse({ records });
     }
 
     if (destinationType === 'warehouse') {

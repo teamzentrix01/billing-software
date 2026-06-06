@@ -93,6 +93,8 @@ function formatCost(value) {
 
 function mapRecordsToTable(records) {
   return (records || []).map((row) => ({
+    _id: row.id,
+    _status: row.status || "confirmed",
     "Transaction ID": row.transactionId
       ? `#${row.transactionId}`
       : `#STK-${row.id}`,
@@ -522,9 +524,7 @@ function applyStockInExpiryDateFormat(XLSX, worksheet, rowLimit) {
   const column = XLSX.utils.encode_col(columnIndex);
   for (let rowNumber = 2; rowNumber <= rowLimit; rowNumber++) {
     const ref = `${column}${rowNumber}`;
-    if (!worksheet[ref]) worksheet[ref] = { t: "s", v: "" };
-    worksheet[ref].t = "s";
-    worksheet[ref].z = "@";
+    if (worksheet[ref]) worksheet[ref].z = "dd/mm/yyyy";
   }
 }
 
@@ -766,6 +766,8 @@ export default function StockInPage() {
   const [pendingMissingProduct, setPendingMissingProduct] = useState(null);
   const [bulkPreviewRows, setBulkPreviewRows] = useState([]);
   const [bulkPreviewSelected, setBulkPreviewSelected] = useState({});
+  const [stockPreview, setStockPreview] = useState(null);
+  const [loadingStockPreview, setLoadingStockPreview] = useState(false);
 
   // ── NEW: state for destination picker modal (bulk import flow) ──
   const [destinationPickerRows, setDestinationPickerRows] = useState(null);
@@ -774,26 +776,12 @@ export default function StockInPage() {
 
   const fileInputRef = useRef(null);
   const router = useRouter();
-  const destinationStores =
-    sourceType === "vendor"
-      ? stores
-      : stores.filter((store) => !isWarehouseLocation(store));
+  const destinationStores = stores;
   const filteredVendors = vendors.filter((vendor) =>
     `${vendor.name || ""} ${vendor.company || ""}`
       .toLowerCase()
       .includes(vendorQuery.trim().toLowerCase()),
   );
-
-  useEffect(() => {
-    if (sourceType === "vendor") return;
-    if (!destination) return;
-    const selectedStore = stores.find(
-      (store) => String(store.id) === String(destination),
-    );
-    if (selectedStore && isWarehouseLocation(selectedStore)) {
-      setDestination("");
-    }
-  }, [destination, sourceType, stores]);
 
   useEffect(() => {
     setLoadingList(true);
@@ -1182,6 +1170,30 @@ export default function StockInPage() {
     setShowTemplateFilters(false);
   };
 
+  const openStockPreview = async (row) => {
+    if (!row?._id) return;
+    setLoadingStockPreview(true);
+    try {
+      const res = await fetch(`/api/inventory/stockin/${encodeURIComponent(row._id)}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load stock in preview");
+      setStockPreview(data);
+    } catch (err) {
+      alert(err.message || "Failed to load stock in preview");
+    } finally {
+      setLoadingStockPreview(false);
+    }
+  };
+
+  const editStockIn = (row) => {
+    if (!row?._id) return;
+    if (String(row._status || "").toLowerCase() === "confirmed") {
+      alert("Confirmed stock in cannot be edited directly. Use Preview to verify, then make a stock adjustment/validation for correction.");
+      return;
+    }
+    router.push(`/inventory/stockin/line-items?id=${encodeURIComponent(row._id)}`);
+  };
+
   const handleDownloadBulkTemplate = async () => {
     if (!templateFilters.vendorId) {
       alert("Please select a vendor first.");
@@ -1515,7 +1527,85 @@ export default function StockInPage() {
         tableHeaders={tableHeaders}
         tableData={loadingList ? [] : tableData}
         emptyMessage={loadingList ? "Loading records…" : "No Records Found"}
+        rowActions={(row) => (
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => openStockPreview(row)}
+              className="rounded-lg border border-blue-100 px-3 py-1.5 text-[12px] font-semibold text-blue-700 hover:bg-blue-50"
+            >
+              Preview
+            </button>
+            <button
+              type="button"
+              onClick={() => editStockIn(row)}
+              className="rounded-lg border border-red-100 px-3 py-1.5 text-[12px] font-semibold text-red-700 hover:bg-red-50"
+            >
+              Edit
+            </button>
+          </div>
+        )}
       />
+
+      {(stockPreview || loadingStockPreview) && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 px-4">
+          <div className="flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-gray-200 px-6 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Stock In Preview</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  {stockPreview?.transactionId || "Loading..."} · {stockPreview?.destinationName || ""}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStockPreview(null)}
+                className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+            <div className="grid gap-3 border-b border-gray-100 px-6 py-4 text-sm text-gray-600 sm:grid-cols-4">
+              <div><span className="block text-xs text-gray-400">Invoice</span>{stockPreview?.invoice_number || "—"}</div>
+              <div><span className="block text-xs text-gray-400">Date</span>{formatDate(stockPreview?.invoice_date)}</div>
+              <div><span className="block text-xs text-gray-400">Source</span>{stockPreview?.referenceType || "—"}</div>
+              <div><span className="block text-xs text-gray-400">Status</span>{stockPreview?.status || "—"}</div>
+            </div>
+            <div className="overflow-auto p-4">
+              {loadingStockPreview ? (
+                <div className="py-16 text-center text-sm text-gray-500">Loading preview...</div>
+              ) : (
+                <table className="w-full min-w-[820px]">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">
+                      <th className="px-3 py-2">Product</th>
+                      <th className="px-3 py-2">SKU</th>
+                      <th className="px-3 py-2">Batch</th>
+                      <th className="px-3 py-2">Qty</th>
+                      <th className="px-3 py-2">Cost</th>
+                      <th className="px-3 py-2">Tax</th>
+                      <th className="px-3 py-2">Expiry</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(stockPreview?.items || []).map((item) => (
+                      <tr key={item.id} className="border-b border-gray-50 text-[13px] text-gray-700">
+                        <td className="px-3 py-2 font-semibold text-gray-900">{item.name}</td>
+                        <td className="px-3 py-2">{item.sku || "—"}</td>
+                        <td className="px-3 py-2">{item.batch_no || "—"}</td>
+                        <td className="px-3 py-2">{item.qty}</td>
+                        <td className="px-3 py-2">{formatCost(item.cost_price)}</td>
+                        <td className="px-3 py-2">{formatCost(item.tax_value)}</td>
+                        <td className="px-3 py-2">{formatDate(item.expiry_date)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Destination Picker Modal (bulk import flow) ── */}
       {showDestinationPicker && (

@@ -165,6 +165,16 @@ function getAvailableStockSql(storeParam = '$1') {
   `.trim();
 }
 
+function getBatchVariantNumberSql(key, fallbackSql = '0') {
+  return `
+    CASE
+      WHEN ib.meta ? '${key}' AND (ib.meta->>'${key}') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+      THEN (ib.meta->>'${key}')::numeric
+      ELSE ${fallbackSql}
+    END
+  `.trim();
+}
+
 export async function POST(req) {
   let client;
   try {
@@ -230,6 +240,7 @@ export async function POST(req) {
         return errorResponse('Invalid product or quantity', 400);
       }
 
+      const requestedBatchId = Number(item.selectedBatchId || item.batchId || 0) || null;
       const stockRes = await client.query(
         `SELECT
            p.id,
@@ -244,7 +255,7 @@ export async function POST(req) {
            COALESCE(t.rate, 0) AS tax_rate,
            t.name AS tax_name,
            t.tax_type AS tax_type,
-           ${getAvailableStockSql('$2')} AS available_stock
+           ${requestedBatchId ? 'COALESCE(selected_batch.available_qty, 0)' : getAvailableStockSql('$2')} AS available_stock
          FROM products p
          INNER JOIN product_saleability ps
            ON ps.product_id = p.id
@@ -260,6 +271,13 @@ export async function POST(req) {
              AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
            GROUP BY product_id
          ) batch_totals ON batch_totals.product_id = p.id
+         LEFT JOIN inventory_batches selected_batch
+           ON selected_batch.id = $3
+          AND selected_batch.product_id = p.id
+          AND selected_batch.store_id = $2
+          AND selected_batch.status = 'active'
+          AND selected_batch.available_qty > 0
+          AND (selected_batch.expiry_date IS NULL OR selected_batch.expiry_date >= CURRENT_DATE)
          LEFT JOIN (
            SELECT sii.product_id, SUM(sii.qty) AS qty
            FROM stock_in_items sii
@@ -285,7 +303,7 @@ export async function POST(req) {
          ) stock_out_totals ON stock_out_totals.product_id = p.id
          WHERE p.id = $1 AND COALESCE(p.is_active, TRUE) = TRUE
          FOR UPDATE OF ps`,
-        [productId, Number(storeId)]
+        [productId, Number(storeId), requestedBatchId]
       );
 
       const dbProduct = stockRes.rows[0];
@@ -300,7 +318,7 @@ export async function POST(req) {
         return errorResponse(`${dbProduct.name} has only ${availableStock} stock in this store`, 400);
       }
 
-      normalizedItems.push({ ...item, productId, qty, dbProduct });
+      normalizedItems.push({ ...item, productId, qty, selectedBatchId: requestedBatchId, dbProduct });
     }
 
     let subtotal = 0;
@@ -452,6 +470,7 @@ export async function POST(req) {
         productId: item.productId,
         storeId: Number(storeId),
         qty,
+        preferredBatchId: item.selectedBatchId,
         strategy: issueStrategy,
         referenceType: 'sales_bill',
         referenceId: billId,
@@ -649,11 +668,24 @@ export async function GET(req) {
     const params = [];
     let productsSql = `
       SELECT
-        p.id, p.name, p.sku, p.barcode, p.mrp, p.selling_price, p.cost_price, p.allow_discount_on_pos, p.include_tax,
+        p.id,
+        p.name,
+        p.sku,
+        p.barcode,
+        COALESCE(batch_variant.variant_mrp, p.mrp, 0) AS mrp,
+        COALESCE(batch_variant.variant_selling_price, NULLIF(ps.selling_price, 0), p.selling_price, 0) AS selling_price,
+        COALESCE(batch_variant.variant_cost_price, p.cost_price, 0) AS cost_price,
+        p.allow_discount_on_pos,
+        p.include_tax,
         c.name AS "categoryName",
         b.name AS "brandName",
-        ${getAvailableStockSql('$1')} AS "availableStock",
-        COALESCE(t.rate, 0) AS "taxRate"
+        COALESCE(batch_variant.qty, 0) AS "availableStock",
+        COALESCE(t.rate, 0) AS "taxRate",
+        batch_variant.preferred_batch_id AS "selectedBatchId",
+        CASE
+          WHEN batch_variant.preferred_batch_id IS NULL THEN p.id::text
+          ELSE p.id::text || ':batch:' || batch_variant.preferred_batch_id::text
+        END AS "variantKey"
       FROM products p
       INNER JOIN product_saleability ps
         ON ps.product_id = p.id
@@ -662,15 +694,20 @@ export async function GET(req) {
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN brands b ON p.brand_id = b.id
       LEFT JOIN taxes t ON p.tax_id = t.id
-      LEFT JOIN (
-        SELECT product_id, SUM(available_qty) AS qty
-        FROM inventory_batches
-        WHERE store_id = $1
-          AND status = 'active'
-          AND available_qty > 0
-          AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
-        GROUP BY product_id
-      ) batch_totals ON batch_totals.product_id = p.id
+      LEFT JOIN LATERAL (
+        SELECT
+          ib.id AS preferred_batch_id,
+          ${getBatchVariantNumberSql('mrp', 'COALESCE(p.mrp, 0)')} AS variant_mrp,
+          ${getBatchVariantNumberSql('sellingPrice', 'COALESCE(NULLIF(ps.selling_price, 0), p.selling_price, 0)')} AS variant_selling_price,
+          ${getBatchVariantNumberSql('costPrice', 'COALESCE(ib.cost_price, p.cost_price, 0)')} AS variant_cost_price,
+          ib.available_qty AS qty
+        FROM inventory_batches ib
+        WHERE ib.product_id = p.id
+          AND ib.store_id = $1
+          AND ib.status = 'active'
+          AND ib.available_qty > 0
+          AND (ib.expiry_date IS NULL OR ib.expiry_date >= CURRENT_DATE)
+      ) batch_variant ON TRUE
       LEFT JOIN (
         SELECT sii.product_id, SUM(sii.qty) AS qty
         FROM stock_in_items sii
@@ -733,7 +770,7 @@ export async function GET(req) {
     }
 
     params.push(pageSize, offset);
-    productsSql += ` ORDER BY p.name ASC LIMIT $${params.length - 1} OFFSET $${params.length}`;
+    productsSql += ` ORDER BY p.name ASC, selling_price ASC, mrp ASC LIMIT $${params.length - 1} OFFSET $${params.length}`;
 
     const productsRes = await query(productsSql, params);
 

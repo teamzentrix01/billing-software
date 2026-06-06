@@ -298,7 +298,7 @@ export async function POST(request) {
         [destinationId],
       );
       const destinationMeta = destinationRes.rows[0]?.meta || {};
-      if (isWarehouseMeta(destinationMeta) && sourceType !== "vendor") {
+      if (isWarehouseMeta(destinationMeta) && !["vendor", "warehouse"].includes(sourceType)) {
         return NextResponse.json(
           { error: "Stock in destination must be a store, not a warehouse" },
           { status: 400 },

@@ -24,11 +24,16 @@ function aggregateItems(items) {
   for (const item of items) {
     const productId = Number(item.product_id || item.productId || 0);
     if (!productId) throw new Error('Each item must have a product');
+    const batchId = Number(item.batch_id || item.batchId || 0) || null;
     const qty = toQty(item.qty);
     const costPrice = toNumber(item.cost_price || item.costPrice);
     const taxValue = toNumber(item.tax_value || item.taxValue);
-    const existing = grouped.get(productId) || {
+    const key = `${productId}:${batchId || `cost:${costPrice}`}`;
+    const existing = grouped.get(key) || {
       product_id: productId,
+      batch_id: batchId,
+      batch_no: item.batch_no || item.batchNo || '',
+      existing_qty: toQty(item.existing_qty || item.existingQty || 0),
       qty: 0,
       cost_price: costPrice,
       tax_value: taxValue,
@@ -36,7 +41,7 @@ function aggregateItems(items) {
     existing.qty = roundQty(existing.qty + qty);
     existing.cost_price = costPrice || existing.cost_price;
     existing.tax_value = taxValue || existing.tax_value;
-    grouped.set(productId, existing);
+    grouped.set(key, existing);
   }
   return Array.from(grouped.values());
 }
@@ -125,9 +130,9 @@ export async function POST(request, { params }) {
         const productName = productMap.get(productId)?.name || `Product ${productId}`;
         await client.query(
           `INSERT INTO stock_validation_items (
-            stock_validation_id, product_id, product_name, qty, cost_price, tax_value, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-          [id, productId, productName, countedQty, item.cost_price || 0, item.tax_value || 0]
+            stock_validation_id, product_id, product_name, qty, cost_price, tax_value, batch_id, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+          [id, productId, productName, countedQty, item.cost_price || 0, item.tax_value || 0, item.batch_id || null]
         );
 
         const stockRes = await client.query(
@@ -137,10 +142,11 @@ export async function POST(request, { params }) {
              AND store_id = $2
              AND status = 'active'
              AND available_qty > 0
-             AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)`,
-          [productId, draft.rows[0].destination_id]
+             AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)
+             ${item.batch_id ? 'AND id = $3' : ''}`,
+          item.batch_id ? [productId, draft.rows[0].destination_id, Number(item.batch_id)] : [productId, draft.rows[0].destination_id]
         );
-        const currentQty = toQty(stockRes.rows[0]?.qty || 0);
+        const currentQty = toQty(stockRes.rows[0]?.qty || item.existing_qty || 0);
         const variance = roundQty(countedQty - currentQty);
 
         if (variance > 0) {
@@ -150,15 +156,17 @@ export async function POST(request, { params }) {
             storeId: draft.rows[0].destination_id,
             qty: variance,
             costPrice: toNumber(item.cost_price),
-            batchNo: `AUD-${id}-${productId}`,
+            batchNo: item.batch_no || `AUD-${id}-${productId}`,
             meta: {
               source: 'stock_validation',
               validationId: id,
+              sourceBatchId: item.batch_id || null,
               productName,
               countedQty,
               previousQty: currentQty,
               variance,
               adjustmentType: 'gain',
+              costPrice: toNumber(item.cost_price),
             },
           });
         } else if (variance < 0) {
@@ -166,6 +174,7 @@ export async function POST(request, { params }) {
             productId,
             storeId: draft.rows[0].destination_id,
             qty: Math.abs(variance),
+            preferredBatchId: item.batch_id || null,
             referenceType: 'stock_validation',
             referenceId: id,
             meta: {

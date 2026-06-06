@@ -21,6 +21,7 @@ export default function InventoryShell({
   onDownload,
   emptyMessage = 'No Records Found',
   showTable = true,
+  rowActions = null,
 }) {
   const [localSearch, setLocalSearch] = useState('');
   const activeSearch = typeof onSearchChange === 'function' ? (searchValue || '') : localSearch;
@@ -193,6 +194,11 @@ export default function InventoryShell({
                     {header}
                   </th>
                 ))}
+                {rowActions && (
+                  <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                    Actions
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -204,11 +210,16 @@ export default function InventoryShell({
                         {row[header] || '-'}
                       </td>
                     ))}
+                    {rowActions && (
+                      <td className="px-4 py-3 text-right">
+                        {rowActions(row)}
+                      </td>
+                    )}
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={tableHeaders.length} className="px-4 py-14 text-center text-[14px] font-medium text-indigo-700">
+                  <td colSpan={tableHeaders.length + (rowActions ? 1 : 0)} className="px-4 py-14 text-center text-[14px] font-medium text-indigo-700">
                     {emptyMessage}
                   </td>
                 </tr>
