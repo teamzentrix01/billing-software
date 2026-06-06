@@ -5,6 +5,7 @@ import { ensureSalesReturnsSchema } from '@/lib/salesReturnsSchema';
 import { ensureInvoiceSalesOrdersSchema } from '@/lib/invoiceSalesOrdersSchema';
 import { allocateBatchStock, ensureInventoryBatchSchema, getInventoryIssueStrategy } from '@/lib/inventoryBatching';
 import { auditLog, requireAuth, requirePermission, requireStore } from '@/lib/api-protection';
+import { validatePhoneNumber } from '@/lib/phoneValidator';
 
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -44,6 +45,11 @@ export async function POST(req) {
     if (!store_id || !items.length || !total_amount) {
       return errorResponse('Missing required fields', 400);
     }
+    const normalizedCustomerName = String(customer_name || '').trim() || 'Walk-in Customer';
+    const normalizedCustomerMobile = String(customer_mobile || '').replace(/\D/g, '').slice(0, 10);
+    if (!normalizedCustomerMobile) return errorResponse('Customer mobile number is required for billing', 400);
+    const phoneValidation = validatePhoneNumber(normalizedCustomerMobile);
+    if (!phoneValidation.isValid) return errorResponse(phoneValidation.error, 400);
 
     const storeCheck = requireStore(user, store_id);
     if (storeCheck.error) return storeCheck.error;
@@ -125,8 +131,8 @@ export async function POST(req) {
     `, [
       billNumber,
       Number(store_id),
-      customer_name || 'Walk-in Customer',
-      customer_mobile || '',
+      normalizedCustomerName,
+      normalizedCustomerMobile,
       subtotal,
       discountTotal,
       taxTotal,
@@ -262,8 +268,8 @@ export async function POST(req) {
       billNumber,
       user.id,
       bill_id,
-      customer_name || 'Walk-in Customer',
-      customer_mobile || '',
+      normalizedCustomerName,
+      normalizedCustomerMobile,
       finalPaymentMode,
       grandTotal,
       discountTotal,

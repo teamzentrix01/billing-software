@@ -205,7 +205,7 @@ export async function POST(req) {
       deviceUid = '',
       counterUid = '',
       counterName = '',
-      customerName = 'Walk-in Customer',
+      customerName = '',
       customerMobile = '',
       paymentMode,
       payments = [],
@@ -215,10 +215,11 @@ export async function POST(req) {
       sendWhatsapp = true,   // POS sends true by default; pass false to suppress
     } = body;
 
-    if (customerMobile) {
-      const phoneValidation = validatePhoneNumber(customerMobile);
-      if (!phoneValidation.isValid) return errorResponse(phoneValidation.error, 400);
-    }
+    const normalizedCustomerName = String(customerName || '').trim() || 'Walk-in Customer';
+    const normalizedCustomerMobile = String(customerMobile || '').replace(/\D/g, '').slice(0, 10);
+    if (!normalizedCustomerMobile) return errorResponse('Customer mobile number is required for billing', 400);
+    const phoneValidation = validatePhoneNumber(normalizedCustomerMobile);
+    if (!phoneValidation.isValid) return errorResponse(phoneValidation.error, 400);
 
     if (!storeId || !items.length || !paymentMode) {
       return errorResponse('Missing required fields', 400);
@@ -389,8 +390,8 @@ export async function POST(req) {
         auth.user.id,
         Number(storeId),
         counterId || null,
-        customerName,
-        customerMobile,
+        normalizedCustomerName,
+        normalizedCustomerMobile,
         subtotal,
         totalDiscount,
         totalTax,
@@ -548,7 +549,7 @@ export async function POST(req) {
     await client.query('COMMIT');
 
     // ── WhatsApp receipt (fire-and-forget, never blocks the response) ──────
-    if (sendWhatsapp && customerMobile) {
+    if (sendWhatsapp && normalizedCustomerMobile) {
       // Fetch store name outside the now-released transaction
       query('SELECT name FROM stores WHERE id = $1', [Number(storeId)])
         .then(({ rows }) => {
@@ -560,10 +561,10 @@ export async function POST(req) {
           }));
 
           return sendBillOnWhatsApp({
-            customerMobile,
+            customerMobile: normalizedCustomerMobile,
             storeName,
             billNumber,
-            customerName,
+            customerName: normalizedCustomerName,
             items:         waItems,
             subtotal,
             discountTotal: totalDiscount,
@@ -591,8 +592,8 @@ export async function POST(req) {
         invoiceNumber: billRes.rows[0].bill_number,
         billNumber:    billRes.rows[0].bill_number,
         publicToken:   billRes.rows[0].public_token ?? null,
-        customerName,
-        customerMobile,
+        customerName: normalizedCustomerName,
+        customerMobile: normalizedCustomerMobile,
         grandTotal,
         totalTax,
         paymentMode: finalPaymentMode,
