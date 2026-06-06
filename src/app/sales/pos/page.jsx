@@ -158,19 +158,35 @@ const DEFAULT_RECEIPT_CONFIG = {
 };
 
 function normalizeProduct(p) {
+  const selectedBatchId = p.selectedBatchId ?? p.selected_batch_id ?? null;
+  const sellingPrice = toNumber(p.selling_price || p.sellingPrice || p.mrp);
+  const mrp = toNumber(p.mrp || p.selling_price || p.sellingPrice);
+  const variantKey = String(
+    p.variantKey ||
+    p.variant_key ||
+    `${p.id}:${selectedBatchId || 'catalog'}:${sellingPrice}:${mrp}`
+  );
   return {
     id: p.id,
+    cartKey: variantKey,
+    variantKey,
+    selectedBatchId,
     name: p.name,
     sku: p.sku || '',
     barcode: p.barcode || '',
-    mrp: toNumber(p.mrp || p.selling_price),
-    sellingPrice: toNumber(p.selling_price || p.sellingPrice || p.mrp),
+    mrp,
+    sellingPrice,
+    costPrice: toNumber(p.cost_price || p.costPrice, 0),
     availableStock: toNumber(p.availableStock ?? p.available_stock ?? p.stock, 0),
     categoryName: p.categoryName || p.category_name || 'N/A',
     taxRate: toNumber(p.taxRate ?? p.tax_rate, 0),
     allowDiscountOnPos: Boolean(p.allow_discount_on_pos ?? p.allowDiscountOnPos),
     includeTax: Boolean(p.includeTax ?? p.include_tax),
   };
+}
+
+function getCartItemKey(item) {
+  return String(item.cartKey || item.variantKey || item.id);
 }
 
 function calculateGstLine(item, canManageDiscounts = true) {
@@ -304,6 +320,7 @@ export default function POSPage() {
   const [loading, setLoading] = useState(false);
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [cart, setCart] = useState([]);
+  const [priceVariantOptions, setPriceVariantOptions] = useState([]);
   const [customerName, setCustomerName] = useState('');
   const [customerMobile, setCustomerMobile] = useState('');
   const [orderDiscount, setOrderDiscount] = useState('0');
@@ -664,25 +681,39 @@ export default function POSPage() {
   const handleBarcode = async (value) => {
     const code = value?.trim();
     if (!code) return;
-    const local = products.find(p =>
+    const localMatches = products.filter(p =>
       (p.barcode && String(p.barcode) === code) ||
       (p.sku && String(p.sku) === code) ||
       String(p.id) === code
     );
-    if (local) {
-      addProduct(local);
+    if (localMatches.length > 1) {
+      setPriceVariantOptions(localMatches);
+      setSearch('');
+      return;
+    }
+    if (localMatches.length === 1) {
+      addProduct(localMatches[0]);
       setSearch('');
       if (searchInputRef.current) searchInputRef.current.focus();
       return;
     }
     try {
       const activeStoreId = session?.storeId || selectedStoreId;
-      const params = new URLSearchParams({ search: code, pageSize: '1' });
+      const params = new URLSearchParams({ search: code, pageSize: '20' });
       if (activeStoreId) params.set('store_id', String(activeStoreId));
       const res = await fetch(`/api/sales-order/pos?${params}`);
       const json = await res.json();
-      if (json.success && json.data?.products?.[0]) {
-        addProduct(normalizeProduct(json.data.products[0]));
+      const matches = (json.success ? (json.data?.products || []).map(normalizeProduct) : [])
+        .filter((p) =>
+          (p.barcode && String(p.barcode) === code) ||
+          (p.sku && String(p.sku) === code) ||
+          String(p.id) === code
+        );
+      if (matches.length > 1) {
+        setPriceVariantOptions(matches);
+        setSearch('');
+      } else if (matches.length === 1 || json.data?.products?.[0]) {
+        addProduct(matches[0] || normalizeProduct(json.data.products[0]));
         setSearch('');
       }
       else showToast('Product not found', 'error');
@@ -696,17 +727,18 @@ export default function POSPage() {
     const sellingPrice = product.sellingPrice || product.mrp || 0;
     const mrp = product.mrp || 0;
     const discountAmount = canManageDiscounts && product.allowDiscountOnPos ? Math.max(0, mrp - sellingPrice) : 0;
+    const cartKey = getCartItemKey(product);
     setCart((current) => {
-      const existing = current.find((item) => item.id === product.id);
-      if (existing) return current.map((item) => item.id === product.id ? { ...item, qty: Math.min(item.qty + 1, toNumber(product.availableStock)) } : item);
-      return [...current, { ...product, qty: 1, discountAmount, sellingPrice }];
+      const existing = current.find((item) => getCartItemKey(item) === cartKey);
+      if (existing) return current.map((item) => getCartItemKey(item) === cartKey ? { ...item, qty: Math.min(item.qty + 1, toNumber(product.availableStock)) } : item);
+      return [...current, { ...product, cartKey, qty: 1, discountAmount, sellingPrice }];
     });
   };
 
-  const updateCartItem = (id, field, value) =>
-    setCart((current) => current.map((item) => (item.id === id ? { ...item, [field]: value } : item)));
+  const updateCartItem = (key, field, value) =>
+    setCart((current) => current.map((item) => (getCartItemKey(item) === String(key) ? { ...item, [field]: value } : item)));
 
-  const removeCartItem = (id) => setCart((current) => current.filter((item) => item.id !== id));
+  const removeCartItem = (key) => setCart((current) => current.filter((item) => getCartItemKey(item) !== String(key)));
 
   const clearCart = () => {
     setCart([]); setCustomerName(''); setCustomerMobile('');
@@ -1147,7 +1179,8 @@ export default function POSPage() {
         payments: normalizedPayments,
         items: cart.map((item) => ({
           productId: item.id, name: item.name, qty: item.qty, sellingPrice: item.sellingPrice,
-          mrp: item.mrp, taxRate: item.taxRate || 0, includeTax: item.includeTax,
+          mrp: item.mrp, barcode: item.barcode, sku: item.sku, selectedBatchId: item.selectedBatchId,
+          taxRate: item.taxRate || 0, includeTax: item.includeTax,
           discountAmount: canManageDiscounts && item.allowDiscountOnPos ? toNumber(item.discountAmount) : 0,
         })),
         orderDiscount: canApplyOrderDiscount ? toNumber(orderDiscount) : 0,
@@ -1264,6 +1297,57 @@ export default function POSPage() {
               {toast.type === 'success' ? '✓' : toast.type === 'error' ? '✕' : 'ℹ'}
             </span>
             {toast.msg}
+          </div>
+        )}
+
+        {priceVariantOptions.length > 0 && (
+          <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 p-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+              <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Select Price</h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Same barcode/product has multiple stock-in price batches.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPriceVariantOptions([])}
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="max-h-[60vh] overflow-auto p-3">
+                {priceVariantOptions.map((product) => (
+                  <button
+                    key={product.variantKey || product.id}
+                    type="button"
+                    onClick={() => {
+                      addProduct(product);
+                      setPriceVariantOptions([]);
+                      setSearch('');
+                      searchInputRef.current?.focus();
+                    }}
+                    className="mb-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400 hover:bg-indigo-50/40"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-slate-900">{product.name}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          SKU: {product.sku || '-'} · Barcode: {product.barcode || '-'}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">Stock: {product.availableStock}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-base font-black text-indigo-700">{formatCurrency(product.sellingPrice)}</p>
+                        <p className="text-xs text-slate-500">MRP {formatCurrency(product.mrp)}</p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
@@ -1426,7 +1510,7 @@ export default function POSPage() {
               ) : (
                 filteredProducts.map((product) => (
                   <button
-                    key={product.id}
+                    key={product.variantKey || product.id}
                     onClick={() => addProduct(product)}
                     disabled={product.availableStock <= 0}
                     className={`self-start relative text-left rounded-xl border p-3 transition-all group w-full ${
@@ -1501,12 +1585,14 @@ export default function POSPage() {
               ) : (
                 <>
                   <div className="overflow-auto" style={{ maxHeight: '260px' }}>
-                    {cart.map((item) => (
-                      <div key={item.id}
+                    {cart.map((item) => {
+                      const itemKey = getCartItemKey(item);
+                      return (
+                      <div key={itemKey}
                         className="px-3 py-2.5 border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors">
                         <div className="flex items-start justify-between gap-2 mb-2">
                           <p className="font-bold text-slate-800 text-xs leading-snug flex-1 line-clamp-2">{item.name}</p>
-                          <button onClick={() => removeCartItem(item.id)}
+                          <button onClick={() => removeCartItem(itemKey)}
                             className="w-5 h-5 rounded-md bg-rose-50 text-rose-400 hover:bg-rose-500 hover:text-white text-[10px] font-black flex items-center justify-center transition-all shrink-0 mt-0.5">
                             ✕
                           </button>
@@ -1515,18 +1601,18 @@ export default function POSPage() {
                           {/* Qty +/- */}
                           <div className="flex items-center rounded-lg border border-slate-200 overflow-hidden shrink-0">
                             <button
-                              onClick={() => item.qty > 1 && updateCartItem(item.id, 'qty', item.qty - 1)}
+                              onClick={() => item.qty > 1 && updateCartItem(itemKey, 'qty', item.qty - 1)}
                               className="w-7 h-7 flex items-center justify-center text-slate-500 hover:bg-indigo-50 hover:text-indigo-700 font-bold text-base transition-colors">
                               −
                             </button>
                             <input
                               type="number" min="1"
                               value={item.qty}
-                              onChange={(e) => updateCartItem(item.id, 'qty', toNumber(e.target.value, 1))}
+                              onChange={(e) => updateCartItem(itemKey, 'qty', toNumber(e.target.value, 1))}
                               className="w-9 h-7 text-center text-xs font-bold text-slate-900 bg-white border-x border-slate-200 outline-none"
                             />
                             <button
-                              onClick={() => updateCartItem(item.id, 'qty', Math.min(item.qty + 1, item.availableStock))}
+                              onClick={() => updateCartItem(itemKey, 'qty', Math.min(item.qty + 1, item.availableStock))}
                               className="w-7 h-7 flex items-center justify-center text-slate-500 hover:bg-indigo-50 hover:text-indigo-700 font-bold text-base transition-colors">
                               +
                             </button>
@@ -1538,7 +1624,7 @@ export default function POSPage() {
                               <input
                                 type="number" min="0"
                                 value={item.discountAmount}
-                                onChange={(e) => updateCartItem(item.id, 'discountAmount', toNumber(e.target.value, 0))}
+                                onChange={(e) => updateCartItem(itemKey, 'discountAmount', toNumber(e.target.value, 0))}
                                 className="flex-1 min-w-0 rounded-md border border-slate-200 px-1.5 h-7 text-xs text-slate-900 outline-none focus:border-indigo-400 bg-white"
                               />
                             </div>
@@ -1552,7 +1638,8 @@ export default function POSPage() {
                           </span>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   {/* Totals */}

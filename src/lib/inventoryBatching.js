@@ -236,6 +236,7 @@ export async function allocateBatchStock(client, {
   productId,
   storeId,
   qty,
+  preferredBatchId = null,
   strategy = 'FEFO',
   referenceType = 'stock_out',
   referenceId = null,
@@ -250,21 +251,25 @@ export async function allocateBatchStock(client, {
 
   const mode = String(strategy || 'FEFO').toUpperCase() === 'FIFO' ? 'FIFO' : 'FEFO';
   const expiryGuard = allowExpired ? '' : 'AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)';
+  const preferredId = Number(preferredBatchId);
+  const hasPreferredBatch = Number.isFinite(preferredId) && preferredId > 0;
+  const preferredGuard = hasPreferredBatch ? 'AND id = $3' : '';
   const orderBy = mode === 'FIFO'
     ? 'created_at ASC, id ASC'
     : 'CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END ASC, expiry_date ASC, created_at ASC, id ASC';
 
   const batchRes = await client.query(
-    `SELECT id, product_id, store_id, batch_no, mfg_date, expiry_date, available_qty, cost_price
+    `SELECT id, product_id, store_id, batch_no, mfg_date, expiry_date, available_qty, cost_price, meta
      FROM inventory_batches
      WHERE product_id = $1
        AND store_id = $2
        AND status = 'active'
        AND available_qty > 0
        ${expiryGuard}
+       ${preferredGuard}
      ORDER BY ${orderBy}
      FOR UPDATE`,
-    [Number(productId), Number(storeId)]
+    hasPreferredBatch ? [Number(productId), Number(storeId), preferredId] : [Number(productId), Number(storeId)]
   );
 
   let remaining = requiredQty;
@@ -308,6 +313,8 @@ export async function allocateBatchStock(client, {
       expiryDate: normalizeDate(batch.expiry_date),
       qty: usedQty,
       costPrice: toNumber(batch.cost_price),
+      mrp: toNumber(batch.meta?.mrp),
+      sellingPrice: toNumber(batch.meta?.sellingPrice),
       strategy: mode,
     });
     remaining = Math.round((remaining - usedQty) * 1000) / 1000;

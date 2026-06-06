@@ -66,7 +66,7 @@ async function allocateWarehouseBatchStock(client, {
 
   const batchRes = await client.query(
     `SELECT ib.id, ib.product_id, ib.store_id, ib.batch_no, ib.mfg_date, ib.expiry_date,
-            ib.available_qty, ib.cost_price
+            ib.available_qty, ib.cost_price, ib.meta
      FROM inventory_batches ib
      INNER JOIN stores s ON s.id = ib.store_id
      WHERE ib.product_id = $1
@@ -121,6 +121,8 @@ async function allocateWarehouseBatchStock(client, {
       expiryDate: normalizeDate(batch.expiry_date),
       qty: usedQty,
       costPrice: toNumber(batch.cost_price),
+      mrp: toNumber(batch.meta?.mrp),
+      sellingPrice: toNumber(batch.meta?.sellingPrice),
       sourceWarehouseId: Number(batch.store_id),
     });
     remaining = Math.round((remaining - usedQty) * 1000) / 1000;
@@ -413,6 +415,9 @@ export async function POST(request, { params }) {
                 source: 'warehouse_stock_in',
                 sourceWarehouseId: allocation.sourceWarehouseId,
                 sourceBatchId: allocation.batchId,
+                costPrice: allocation.costPrice || costPrice,
+                mrp: allocation.mrp || mrp,
+                sellingPrice: allocation.sellingPrice || sellingPrice,
               },
             });
           }
@@ -453,7 +458,13 @@ export async function POST(request, { params }) {
               batchNo: batch.batchNo,
               mfgDate: normalizeDate(batch.mfgDate) || null,
               expiryDate: normalizeDate(batch.expiryDate) || null,
-              meta: { productName, invoiceNumber: form.invoice_number || null },
+              meta: {
+                productName,
+                invoiceNumber: form.invoice_number || null,
+                costPrice,
+                mrp,
+                sellingPrice,
+              },
             });
           }
         }

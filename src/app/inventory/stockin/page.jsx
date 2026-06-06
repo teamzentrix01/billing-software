@@ -772,26 +772,12 @@ export default function StockInPage() {
 
   const fileInputRef = useRef(null);
   const router = useRouter();
-  const destinationStores =
-    sourceType === "vendor"
-      ? stores
-      : stores.filter((store) => !isWarehouseLocation(store));
+  const destinationStores = stores;
   const filteredVendors = vendors.filter((vendor) =>
     `${vendor.name || ""} ${vendor.company || ""}`
       .toLowerCase()
       .includes(vendorQuery.trim().toLowerCase()),
   );
-
-  useEffect(() => {
-    if (sourceType === "vendor") return;
-    if (!destination) return;
-    const selectedStore = stores.find(
-      (store) => String(store.id) === String(destination),
-    );
-    if (selectedStore && isWarehouseLocation(selectedStore)) {
-      setDestination("");
-    }
-  }, [destination, sourceType, stores]);
 
   useEffect(() => {
     setLoadingList(true);
