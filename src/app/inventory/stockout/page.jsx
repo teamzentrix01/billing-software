@@ -169,6 +169,7 @@ export default function StockOutPage() {
         alert('No rows found in selected file.');
         return;
       }
+      const storeOptions = stores.length ? stores : await fetchStores().catch(() => []);
 
       const created = [];
       let failed = 0;
@@ -180,7 +181,7 @@ export default function StockOutPage() {
           const payload = {
             method,
             destination: method === 'stock_out'
-              ? String(getBulkField(row, ['destination_id', 'destination'], stores[0]?.id || ''))
+              ? String(getBulkField(row, ['destination_id', 'destination', 'store_id', 'store'], storeOptions[0]?.id || ''))
               : 'all',
             applyTaxes: toBoolean(getBulkField(row, ['apply_taxes']), true),
             addProductsPrefill: toBoolean(getBulkField(row, ['add_products_prefill']), true),

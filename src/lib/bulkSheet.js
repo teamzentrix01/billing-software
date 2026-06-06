@@ -53,7 +53,7 @@ function normalizeRow(
   sheet = null,
   XLSX = null,
 ) {
-  const out = {};
+  const out = { __row_index: rowIndex };
   for (const [key, value] of Object.entries(row || {})) {
     const columnIndex = Array.isArray(headerRow)
       ? headerRow.findIndex((header) => String(header) === String(key))
@@ -85,8 +85,9 @@ function normalizeCellValue(value, cell = null) {
 }
 
 function isBlankRow(row) {
-  return Object.values(row || {}).every(
-    (value) => String(value ?? "").trim() === "",
+  return Object.entries(row || {}).every(
+    ([key, value]) =>
+      key === "__row_index" || String(value ?? "").trim() === "",
   );
 }
 
