@@ -43,7 +43,7 @@ export async function POST(request, { params }) {
     try {
       await client.query('BEGIN');
 
-      const draft = await client.query('SELECT id, status, source_id, destination_id, transaction_id FROM stock_transfer WHERE id = $1', [id]);
+      const draft = await client.query('SELECT id, status, source_id, destination_id, transaction_id FROM stock_transfer WHERE id = $1 FOR UPDATE', [id]);
       if (draft.rows.length === 0) {
         await client.query('ROLLBACK');
         return NextResponse.json({ error: 'Stock transfer not found' }, { status: 404 });
@@ -138,6 +138,6 @@ export async function POST(request, { params }) {
     }
   } catch (err) {
     console.error('[stocktransfer confirm]', err.message);
-    return NextResponse.json({ error: 'Failed to confirm stock transfer' }, { status: 500 });
+    return NextResponse.json({ error: err.message || 'Failed to confirm stock transfer' }, { status: 500 });
   }
 }

@@ -1,12 +1,19 @@
 import { NextResponse } from 'next/server';
 import { query, getClient } from '@/lib/db';
 import { ensureStockInSchema } from '@/lib/stockInSchema';
+import { ensureInventoryBatchSchema } from '@/lib/inventoryBatching';
 import { ensurePurchaseOrderSchema } from '@/lib/purchaseOrderSchema';
 import { appendStoreScope, requireAuth, requirePermission, requireStore } from '@/lib/api-protection';
+import { toDateInputValue } from '@/lib/dateUtils';
+
+function normalizeDate(value) {
+  return toDateInputValue(value) || null;
+}
 
 export async function GET(request) {
   try {
     await ensureStockInSchema();
+    await ensureInventoryBatchSchema();
     await ensurePurchaseOrderSchema();
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
@@ -159,9 +166,28 @@ export async function POST(request) {
       // optionally insert line items if provided
       const inputItems = Array.isArray(payload.items) && payload.items.length ? payload.items : poItems;
       if (Array.isArray(inputItems) && inputItems.length) {
-        const insertItemText = `INSERT INTO stock_in_items (stock_in_id, product_id, product_name, qty, cost_price, tax_value) VALUES ($1, $2, $3, $4, $5, $6)`;
+        const insertItemText = `
+          INSERT INTO stock_in_items (
+            stock_in_id, product_id, product_name, qty, cost_price, tax_value,
+            batch_no, mfg_date, expiry_date, mrp, selling_price, serial_number, scan_code, meta
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)`;
         for (const it of inputItems) {
-          await client.query(insertItemText, [id, it.product_id, it.product_name || null, it.qty || 0, it.cost_price || 0, it.tax_value || 0]);
+          await client.query(insertItemText, [
+            id,
+            it.product_id,
+            it.product_name || null,
+            it.qty || 0,
+            it.cost_price || 0,
+            it.tax_value || 0,
+            it.batch_no || it.batchNo || null,
+            normalizeDate(it.mfg_date || it.mfgDate) || null,
+            normalizeDate(it.expiry_date || it.expiryDate) || null,
+            Number(it.mrp || 0),
+            Number(it.selling_price || it.sellingPrice || 0),
+            it.serial_number || it.serialNumber || null,
+            it.scan_code || it.scanCode || null,
+            JSON.stringify({ source: 'purchase_grn' }),
+          ]);
         }
       }
 

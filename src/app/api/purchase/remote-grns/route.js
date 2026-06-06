@@ -4,6 +4,7 @@ import { ensureStockInSchema } from '@/lib/stockInSchema';
 import { ensureCatalogExtrasSchema } from '@/lib/catalogExtrasSchema';
 import { ensureInventoryBatchSchema } from '@/lib/inventoryBatching';
 import { appendStoreScope, requireAuth, requirePermission, requireStore } from '@/lib/api-protection';
+import { toDateInputValue } from '@/lib/dateUtils';
 
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -13,15 +14,11 @@ function toNumber(value, fallback = 0) {
 function toQty(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return 0;
-  return Math.trunc(parsed);
+  return Math.round(parsed * 1000) / 1000;
 }
 
 function normalizeDate(value) {
-  if (!value) return null;
-  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return value.trim();
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString().slice(0, 10);
+  return toDateInputValue(value) || null;
 }
 
 function mapItem(item) {
@@ -87,9 +84,16 @@ async function lookupProduct(scan, storeId) {
      ORDER BY
        CASE WHEN p.barcode = $1 THEN 0 WHEN p.sku = $1 THEN 1 ELSE 2 END,
        p.id
-     LIMIT 1`,
+     LIMIT 2`,
     params
   );
+
+  if (productRes.rows.length > 1) {
+    return {
+      ambiguous: true,
+      message: 'Multiple products found for this barcode/SKU. Please fix duplicate barcode/SKU in product master.',
+    };
+  }
 
   const row = productRes.rows[0];
   if (!row) return null;
@@ -135,6 +139,7 @@ export async function GET(request) {
       }
       const product = await lookupProduct(scan, storeId);
       if (!product) return NextResponse.json({ error: 'Product not found in master' }, { status: 404 });
+      if (product.ambiguous) return NextResponse.json({ error: product.message }, { status: 409 });
       return NextResponse.json({ product });
     }
 
