@@ -721,9 +721,9 @@ export async function GET(req) {
             ib.available_qty,
             ib.expiry_date,
             ib.created_at,
-            ${getBatchVariantNumberSql('mrp', 'COALESCE(p.mrp, 0)')} AS variant_mrp,
-            ${getBatchVariantNumberSql('sellingPrice', 'COALESCE(NULLIF(ps.selling_price, 0), p.selling_price, 0)')} AS variant_selling_price,
-            ${getBatchVariantNumberSql('costPrice', 'COALESCE(ib.cost_price, p.cost_price, 0)')} AS variant_cost_price
+            COALESCE(NULLIF(${getBatchVariantNumberSql('mrp', '0')}, 0), p.mrp, 0) AS variant_mrp,
+            COALESCE(NULLIF(${getBatchVariantNumberSql('sellingPrice', '0')}, 0), NULLIF(ps.selling_price, 0), p.selling_price, 0) AS variant_selling_price,
+            COALESCE(NULLIF(${getBatchVariantNumberSql('costPrice', '0')}, 0), NULLIF(ib.cost_price, 0), p.cost_price, 0) AS variant_cost_price
           FROM inventory_batches ib
           WHERE ib.product_id = p.id
             AND ib.store_id = $1

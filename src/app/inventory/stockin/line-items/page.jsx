@@ -65,6 +65,7 @@ function LineItemsContent() {
   const isStoreDestination = String(draft?.destinationLocationType || '').toLowerCase() === 'store';
   const isWarehouseDestination = String(draft?.destinationLocationType || 'Warehouse').toLowerCase() === 'warehouse';
   const sourceType = String(draft?.meta?.sourceType || 'warehouse').toLowerCase();
+  const isConfirmedStockIn = String(draft?.status || '').toLowerCase() === 'confirmed';
 
   useEffect(() => {
     if (!id) return;
@@ -93,6 +94,8 @@ function LineItemsContent() {
               sku: getProductSku(item),
               cost_price: Number(item.cost_price || 0),
               tax_value: Number(item.tax_value || 0),
+              mrp: Number(item.mrp || 0),
+              selling_price: Number(item.selling_price || 0),
               qty: Number(item.qty || 1),
               max_qty: null,
               batches: warehouseDestination
@@ -298,6 +301,8 @@ function LineItemsContent() {
           name: p.name,
           sku: getProductSku(p),
           cost_price: cost,
+          mrp: Number(p.mrp || 0),
+          selling_price: Number(p.selling_price || p.sellingPrice || 0),
           tax_value: draft?.applyTaxes ? (cost * taxRate) / 100 : 0,
           qty: requestedQty,
           max_qty: sourceType === 'warehouse' && isStoreDestination ? availableStock : null,
@@ -443,6 +448,56 @@ function LineItemsContent() {
     setCart((c) => c.filter((it) => it.line_id !== lineId));
   };
 
+  const buildUpdateItems = () =>
+    cart
+      .flatMap((item) => {
+        if (isWarehouseDestination) {
+          return (item.batches || [])
+            .map((batch) => ({
+              product_id: item.product_id,
+              qty: Number(batch.qty || 0),
+              cost_price: Number(item.cost_price || 0),
+              tax_value: Number(item.tax_value || 0),
+              batch_no: batch.batch_no || item.batch_no || '',
+              mfg_date: batch.mfg_date || item.mfg_date || '',
+              expiry_date: batch.expiry_date || item.expiry_date || '',
+              mrp: Number(item.mrp || 0),
+              selling_price: Number(item.selling_price || 0),
+            }))
+            .filter((row) => Number(row.qty || 0) > 0);
+        }
+
+        return {
+          product_id: item.product_id,
+          qty: Number(item.qty || 0),
+          cost_price: Number(item.cost_price || 0),
+          tax_value: Number(item.tax_value || 0),
+          batch_no: item.batch_no || '',
+          mfg_date: item.mfg_date || '',
+          expiry_date: item.expiry_date || '',
+          mrp: Number(item.mrp || 0),
+          selling_price: Number(item.selling_price || 0),
+        };
+      })
+      .filter((row) => Number(row.qty || 0) > 0);
+
+  const saveConfirmedStockIn = async () => {
+    const items = buildUpdateItems();
+    if (!items.length) throw new Error('Add at least one product with quantity');
+
+    const res = await fetch(`/api/inventory/stockin/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        form: { ...form, vendorIds: selectedVendorIds, sourceType },
+        items,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to save stock in');
+    return data;
+  };
+
   const confirm = async () => {
     if (!id) return alert('Missing stock in id');
     if (cart.length === 0) return alert('Add at least one product');
@@ -452,6 +507,13 @@ function LineItemsContent() {
     }
     setConfirming(true);
     try {
+      if (isConfirmedStockIn) {
+        await saveConfirmedStockIn();
+        alert('Stock in updated successfully');
+        router.push('/inventory/stockin');
+        return;
+      }
+
       const res = await fetch(`/api/inventory/stockin/${encodeURIComponent(id)}/confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -980,7 +1042,7 @@ function LineItemsContent() {
               disabled={confirming || cart.length === 0}
               className="px-5 py-2.5 rounded-lg bg-blue-600 text-white text-[13px] font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {confirming ? 'Confirming…' : 'Confirm Transaction'}
+              {confirming ? (isConfirmedStockIn ? 'Saving…' : 'Confirming…') : (isConfirmedStockIn ? 'Save Changes' : 'Confirm Transaction')}
             </button>
           </div>
         </div>

@@ -1187,10 +1187,6 @@ export default function StockInPage() {
 
   const editStockIn = (row) => {
     if (!row?._id) return;
-    if (String(row._status || "").toLowerCase() === "confirmed") {
-      alert("Confirmed stock in cannot be edited directly. Use Preview to verify, then make a stock adjustment/validation for correction.");
-      return;
-    }
     router.push(`/inventory/stockin/line-items?id=${encodeURIComponent(row._id)}`);
   };
 
