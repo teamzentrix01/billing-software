@@ -1444,10 +1444,10 @@ export default function POSPage() {
         </div>
 
         {/* ── MAIN GRID ── */}
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_370px] gap-4">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_330px] 2xl:grid-cols-[minmax(0,1fr)_370px]">
 
           {/* ══ LEFT: PRODUCTS PANEL ══ */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+          <div className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
 
             {/* Search strip */}
             <div className="px-4 pt-4 pb-3 border-b border-slate-100">
@@ -1493,8 +1493,8 @@ export default function POSPage() {
 
             {/* Product Grid */}
             <div
-              className="p-3 grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4 gap-2 overflow-auto flex-1 items-start content-start"
-              style={{ maxHeight: '68vh' }}
+              className="grid flex-1 grid-cols-2 content-start items-start gap-2 overflow-auto p-2 md:grid-cols-3 2xl:grid-cols-4"
+              style={{ maxHeight: '62vh' }}
             >
               {loading ? (
                 <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400">
@@ -1513,14 +1513,14 @@ export default function POSPage() {
                     key={product.variantKey || product.id}
                     onClick={() => addProduct(product)}
                     disabled={product.availableStock <= 0}
-                    className={`self-start relative text-left rounded-xl border p-3 transition-all group w-full ${
+                    className={`self-start relative text-left rounded-xl border p-2.5 transition-all group w-full min-w-0 ${
                       product.availableStock > 0
                         ? 'border-slate-200 hover:border-indigo-400 hover:shadow-md hover:shadow-indigo-100/60 bg-white cursor-pointer active:scale-[0.98]'
                         : 'border-slate-100 bg-slate-50/70 opacity-55 cursor-not-allowed'
                     }`}
                   >
                     {/* Top row: category + stock pill */}
-                    <div className="flex items-center justify-between gap-1 mb-1.5">
+                    <div className="mb-1.5 flex min-w-0 items-center justify-between gap-1">
                       <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-md truncate leading-tight max-w-[65%]">
                         {product.categoryName}
                       </span>
@@ -1536,14 +1536,14 @@ export default function POSPage() {
                     </div>
 
                     {/* Product name */}
-                    <p className="font-bold text-slate-800 text-xs leading-snug mb-1 group-hover:text-indigo-700 transition-colors line-clamp-2">
+                    <p className="mb-1 line-clamp-2 min-h-[32px] text-xs font-bold leading-snug text-slate-800 transition-colors group-hover:text-indigo-700">
                       {product.name}
                     </p>
 
                     {/* SKU + Price row */}
-                    <div className="flex items-center justify-between gap-1 mt-1.5">
+                    <div className="mt-1.5 flex min-w-0 items-center justify-between gap-1">
                       <span className="text-[10px] text-slate-400 font-mono truncate">{product.sku}</span>
-                      <span className="font-black text-indigo-700 text-sm shrink-0">
+                      <span className="shrink-0 text-xs font-black text-indigo-700 2xl:text-sm">
                         ₹{toNumber(product.sellingPrice).toLocaleString('en-IN')}
                       </span>
                     </div>
@@ -1557,7 +1557,7 @@ export default function POSPage() {
           </div>
 
           {/* ══ RIGHT: ORDER PANEL ══ */}
-          <aside className="flex flex-col gap-3">
+          <aside className="flex min-w-0 flex-col gap-3">
 
             {/* ── CART ── */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -1584,12 +1584,12 @@ export default function POSPage() {
                 </div>
               ) : (
                 <>
-                  <div className="overflow-auto" style={{ maxHeight: '260px' }}>
+                  <div className="overflow-auto" style={{ maxHeight: '190px' }}>
                     {cart.map((item) => {
                       const itemKey = getCartItemKey(item);
                       return (
                       <div key={itemKey}
-                        className="px-3 py-2.5 border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors">
+                        className="border-b border-slate-50 px-2.5 py-2 transition-colors last:border-0 hover:bg-slate-50/50">
                         <div className="flex items-start justify-between gap-2 mb-2">
                           <p className="font-bold text-slate-800 text-xs leading-snug flex-1 line-clamp-2">{item.name}</p>
                           <button onClick={() => removeCartItem(itemKey)}
@@ -1674,10 +1674,10 @@ export default function POSPage() {
               <div className="px-4 py-3 border-b border-slate-100">
                 <span className="text-xs font-black text-slate-700 tracking-widest uppercase">Payment</span>
               </div>
-              <div className="p-3 space-y-2.5">
+              <div className="space-y-2 p-2.5">
 
                 {/* Customer fields */}
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2 2xl:grid-cols-2">
                   <input
                     type="text" value={customerName}
                     onChange={(e) => setCustomerName(e.target.value)}
@@ -1712,15 +1712,15 @@ export default function POSPage() {
 
                 <div>
                   <p className="text-[10px] font-black text-slate-400 tracking-widest uppercase mb-1.5">Payment Method Amounts</p>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-1.5">
                     {FIXED_PAYMENT_METHODS.map((method) => {
                       const paymentRow = payments.find((payment) => payment.method === method.method) || { method: method.method, amount: '' };
                       return (
-                        <div key={method.method} className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
+                        <div key={method.method} className="space-y-1.5 rounded-xl border border-slate-200 bg-white p-2">
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 min-w-0">
                               <i className={`ti ${method.icon} text-base text-slate-600`} />
-                              <span className="text-sm font-bold text-slate-800">{method.label}</span>
+                              <span className="text-xs font-bold text-slate-800">{method.label}</span>
                             </div>
                           </div>
                           <input
@@ -1849,7 +1849,7 @@ export default function POSPage() {
                     </span>
                   </div>
                 </div>
-                <div className="max-h-60 overflow-auto divide-y divide-slate-50">
+                <div className="max-h-44 overflow-auto divide-y divide-slate-50">
                   {recentBills.map((bill, idx) => (
                     <div
                       key={bill.id || bill.billNumber || idx}

@@ -42,6 +42,18 @@ export async function ensureStockValidationSchema() {
 
     CREATE INDEX IF NOT EXISTS idx_stock_validation_status ON stock_validation(status);
     CREATE INDEX IF NOT EXISTS idx_stock_validation_items_validation_id ON stock_validation_items(stock_validation_id);
+
+    DO $$
+    BEGIN
+      IF to_regclass('inventory_batches') IS NOT NULL THEN
+        ALTER TABLE stock_validation_items
+          ADD COLUMN IF NOT EXISTS batch_id BIGINT REFERENCES inventory_batches(id) ON DELETE SET NULL;
+      ELSE
+        ALTER TABLE stock_validation_items
+          ADD COLUMN IF NOT EXISTS batch_id BIGINT;
+      END IF;
+    END
+    $$;
   `);
   ensured = true;
 }
