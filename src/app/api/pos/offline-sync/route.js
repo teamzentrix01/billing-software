@@ -3,6 +3,7 @@ import { successResponse, errorResponse } from '@/lib/api-response';
 import { ensureSalesBillingSchema } from '@/lib/salesBillingSchema';
 import { allocateBatchStock, ensureInventoryBatchSchema, getInventoryIssueStrategy } from '@/lib/inventoryBatching';
 import { requireAuth, requirePermission, requireStore } from '@/lib/api-protection';
+import { validatePhoneNumber } from '@/lib/phoneValidator';
 
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -46,6 +47,8 @@ export async function POST(req) {
 
         const items = Array.isArray(bill.items) ? bill.items : [];
         const billNumber = bill.invoice_number || bill.bill_number || bill.billNumber || `OFL-${Date.now()}-${syncedCount}`;
+        const normalizedCustomerName = String(bill.customer_name || bill.customerName || '').trim() || 'Walk-in Customer';
+        const normalizedCustomerMobile = String(bill.customer_mobile || bill.customerMobile || '').replace(/\D/g, '').slice(0, 10);
         const subtotal = toNumber(
           bill.subtotal,
           items.reduce((sum, item) => sum + toNumber(item.qty) * toNumber(item.selling_price ?? item.sellingPrice), 0)
@@ -65,6 +68,9 @@ export async function POST(req) {
           }))
           .filter((payment) => payment.amount > 0);
         const paidAmount = normalizedPayments.reduce((sum, payment) => sum + payment.amount, 0);
+        if (!normalizedCustomerMobile) throw new Error('Customer mobile number is required for billing');
+        const phoneValidation = validatePhoneNumber(normalizedCustomerMobile);
+        if (!phoneValidation.isValid) throw new Error(phoneValidation.error);
         if (!normalizedPayments.length) throw new Error('Add at least one payment');
         if (Math.abs(paidAmount - grandTotal) > 0.01) {
           throw new Error(`Payment total must match bill total. Paid ${paidAmount}, bill ${grandTotal}`);
@@ -89,8 +95,8 @@ export async function POST(req) {
           bill.sync_id || bill.syncId || null,
           billNumber,
           billStoreId,
-          bill.customer_name || bill.customerName || 'Walk-in Customer',
-          bill.customer_mobile || bill.customerMobile || '',
+          normalizedCustomerName,
+          normalizedCustomerMobile,
           subtotal,
           discountTotal,
           taxTotal,
@@ -142,6 +148,10 @@ export async function POST(req) {
           const productId = Number(item.product_id || item.productId);
           const qty = toNumber(item.qty);
           if (!productId || qty <= 0) throw new Error('Invalid offline product or quantity');
+          const selectedBatchId = Number(item.selectedBatchId || item.selected_batch_id || item.batchId || item.batch_id || 0) || null;
+          const selectedBatchIds = (Array.isArray(item.selectedBatchIds) ? item.selectedBatchIds : [])
+            .map(Number)
+            .filter((id) => Number.isFinite(id) && id > 0);
 
           const productRes = await client.query(
             `SELECT id, name, sku, barcode, mrp, selling_price, cost_price
@@ -164,6 +174,8 @@ export async function POST(req) {
             productId,
             storeId: billStoreId,
             qty,
+            preferredBatchId: selectedBatchIds.length ? null : selectedBatchId,
+            allowedBatchIds: selectedBatchIds,
             strategy: issueStrategy,
             referenceType: 'sales_bill',
             referenceId: bill_id,

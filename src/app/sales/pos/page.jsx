@@ -159,6 +159,11 @@ const DEFAULT_RECEIPT_CONFIG = {
 
 function normalizeProduct(p) {
   const selectedBatchId = p.selectedBatchId ?? p.selected_batch_id ?? null;
+  const selectedBatchIds = Array.isArray(p.selectedBatchIds)
+    ? p.selectedBatchIds
+    : Array.isArray(p.selected_batch_ids)
+      ? p.selected_batch_ids
+      : [];
   const sellingPrice = toNumber(p.selling_price || p.sellingPrice || p.mrp);
   const mrp = toNumber(p.mrp || p.selling_price || p.sellingPrice);
   const variantKey = String(
@@ -171,6 +176,7 @@ function normalizeProduct(p) {
     cartKey: variantKey,
     variantKey,
     selectedBatchId,
+    selectedBatchIds,
     name: p.name,
     sku: p.sku || '',
     barcode: p.barcode || '',
@@ -1159,7 +1165,9 @@ export default function POSPage() {
   const createBill = async () => {
     if (!session?.sessionId) { showToast('Open session first', 'error'); return; }
     if (cart.length === 0) { showToast('Add products to cart', 'error'); return; }
-    if (customerMobile && !validatePhoneNumber(customerMobile).isValid) { showToast(validatePhoneNumber(customerMobile).error, 'error'); return; }
+    const normalizedCustomerName = customerName.trim() || 'Walk-in Customer';
+    if (!customerMobile.trim()) { showToast('Customer mobile number is required for billing', 'error'); return; }
+    if (!validatePhoneNumber(customerMobile).isValid) { showToast(validatePhoneNumber(customerMobile).error, 'error'); return; }
     if (!isPaymentBalanced) {
       showToast(`Payment total must match bill total. Balance ${formatCurrency(paymentBalance)}`, 'error');
       return;
@@ -1173,13 +1181,14 @@ export default function POSPage() {
         deviceUid,
         counterUid: deviceUid,
         counterName: session.counterName || counterName,
-        customerName: customerName || 'Walk-in Customer',
+        customerName: normalizedCustomerName,
         customerMobile,
         paymentMode: normalizedPayments.length > 1 ? 'split' : (normalizedPayments[0]?.method || paymentMode),
         payments: normalizedPayments,
         items: cart.map((item) => ({
           productId: item.id, name: item.name, qty: item.qty, sellingPrice: item.sellingPrice,
           mrp: item.mrp, barcode: item.barcode, sku: item.sku, selectedBatchId: item.selectedBatchId,
+          selectedBatchIds: item.selectedBatchIds || [],
           taxRate: item.taxRate || 0, includeTax: item.includeTax,
           discountAmount: canManageDiscounts && item.allowDiscountOnPos ? toNumber(item.discountAmount) : 0,
         })),
@@ -1493,8 +1502,8 @@ export default function POSPage() {
 
             {/* Product Grid */}
             <div
-              className="grid flex-1 grid-cols-2 content-start items-start gap-2 overflow-auto p-2 md:grid-cols-3 2xl:grid-cols-4"
-              style={{ maxHeight: '62vh' }}
+              className="grid flex-1 grid-cols-2 content-start gap-2 overflow-auto p-2 md:grid-cols-3 2xl:grid-cols-4"
+              style={{ maxHeight: '62vh', gridAutoRows: '118px' }}
             >
               {loading ? (
                 <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400">
@@ -1513,18 +1522,18 @@ export default function POSPage() {
                     key={product.variantKey || product.id}
                     onClick={() => addProduct(product)}
                     disabled={product.availableStock <= 0}
-                    className={`self-start relative text-left rounded-xl border p-2.5 transition-all group w-full min-w-0 ${
+                    className={`flex h-full w-full min-w-0 flex-col overflow-hidden rounded-lg border p-2 text-left transition-all group ${
                       product.availableStock > 0
                         ? 'border-slate-200 hover:border-indigo-400 hover:shadow-md hover:shadow-indigo-100/60 bg-white cursor-pointer active:scale-[0.98]'
                         : 'border-slate-100 bg-slate-50/70 opacity-55 cursor-not-allowed'
                     }`}
                   >
                     {/* Top row: category + stock pill */}
-                    <div className="mb-1.5 flex min-w-0 items-center justify-between gap-1">
-                      <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-md truncate leading-tight max-w-[65%]">
+                    <div className="mb-1.5 flex min-h-[18px] min-w-0 items-center justify-between gap-1">
+                      <span className="max-w-[58%] truncate rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold leading-none text-slate-500">
                         {product.categoryName}
                       </span>
-                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md leading-tight shrink-0 ${
+                      <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold leading-none ${
                         product.availableStock > 10
                           ? 'bg-emerald-50 text-emerald-700'
                           : product.availableStock > 0
@@ -1536,20 +1545,20 @@ export default function POSPage() {
                     </div>
 
                     {/* Product name */}
-                    <p className="mb-1 line-clamp-2 min-h-[32px] text-xs font-bold leading-snug text-slate-800 transition-colors group-hover:text-indigo-700">
+                    <p
+                      className="min-h-[32px] overflow-hidden text-[11px] font-black leading-4 text-slate-800 transition-colors group-hover:text-indigo-700 2xl:text-xs"
+                      style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}
+                    >
                       {product.name}
                     </p>
 
                     {/* SKU + Price row */}
-                    <div className="mt-1.5 flex min-w-0 items-center justify-between gap-1">
-                      <span className="text-[10px] text-slate-400 font-mono truncate">{product.sku}</span>
-                      <span className="shrink-0 text-xs font-black text-indigo-700 2xl:text-sm">
+                    <div className="mt-auto grid min-h-[34px] grid-cols-[minmax(0,1fr)_auto] items-end gap-2 border-t border-slate-50 pt-1.5">
+                      <span className="min-w-0 truncate font-mono text-[9px] leading-tight text-slate-400">{product.sku || product.barcode || '-'}</span>
+                      <span className="shrink-0 whitespace-nowrap text-right text-[11px] font-black leading-tight text-rose-700 2xl:text-xs">
                         ₹{toNumber(product.sellingPrice).toLocaleString('en-IN')}
                       </span>
                     </div>
-
-                    {/* Hover overlay */}
-                    <div className="absolute inset-0 rounded-xl bg-indigo-600/0 group-hover:bg-indigo-600/[0.03] transition-colors pointer-events-none" />
                   </button>
                 ))
               )}
@@ -1693,9 +1702,10 @@ export default function POSPage() {
                         setCustomerMobile(digits);
                         if (digits.length === 10) checkForHeldBills(digits);
                       }}
-                      placeholder="Mobile (10 digits)"
+                      placeholder="Mobile (10 digits) *"
                       maxLength="10"
-                      className={inputCls}
+                      required
+                      className={`${inputCls} ${cart.length > 0 && !customerMobile.trim() ? 'border-rose-300 bg-rose-50/40' : ''}`}
                       style={{ fontSize: '12px' }}
                     />
                     {customerMobile && !validatePhoneNumber(customerMobile).isValid && (

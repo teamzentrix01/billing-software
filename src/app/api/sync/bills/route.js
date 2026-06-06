@@ -22,6 +22,7 @@ import { sendBillOnWhatsApp } from '@/lib/whatsappService';
 import { ensureSalesBillingSchema } from '@/lib/salesBillingSchema';
 import { allocateBatchStock, ensureInventoryBatchSchema, getInventoryIssueStrategy } from '@/lib/inventoryBatching';
 import { requireAuth, requireStore } from '@/lib/api-protection';
+import { validatePhoneNumber } from '@/lib/phoneValidator';
 
 export async function POST(request) {
   // ── Auth ────────────────────────────────────────────────────────────────
@@ -83,6 +84,17 @@ export async function POST(request) {
       const grandTotal   = bill.grandTotal   ?? (subtotal - discountTotal + taxTotal + roundOff);
       const paidAmount   = bill.paidAmount   ?? grandTotal;
       const balanceAmount = bill.balanceAmount ?? 0;
+      const normalizedCustomerName = String(bill.customerName || bill.customer_name || '').trim() || 'Walk-in Customer';
+      const normalizedCustomerMobile = String(bill.customerMobile || bill.customer_mobile || '').replace(/\D/g, '').slice(0, 10);
+      if (!normalizedCustomerMobile) {
+        failed.push({ syncId, error: 'Customer mobile number is required for billing' });
+        continue;
+      }
+      const phoneValidation = validatePhoneNumber(normalizedCustomerMobile);
+      if (!phoneValidation.isValid) {
+        failed.push({ syncId, error: phoneValidation.error });
+        continue;
+      }
 
       const billCreatedAt = bill.createdAt ? new Date(bill.createdAt) : new Date();
 
@@ -111,8 +123,8 @@ export async function POST(request) {
           user.id,
           billStoreId,
           bill.counterId     || null,
-          bill.customerName  || 'Walk-in Customer',
-          bill.customerMobile || null,
+          normalizedCustomerName,
+          normalizedCustomerMobile,
           subtotal,
           discountTotal,
           taxTotal,
@@ -291,7 +303,7 @@ export async function POST(request) {
       );
 
       // ── WhatsApp receipt for offline-synced bills ───────────────────────
-      if (bill.customerMobile) {
+      if (normalizedCustomerMobile) {
         query('SELECT name FROM stores WHERE id = $1', [billStoreId])
           .then(async ({ rows }) => {
             const storeName = rows[0]?.name || 'Our Store';
@@ -301,10 +313,10 @@ export async function POST(request) {
               [syncId]
             );
             return sendBillOnWhatsApp({
-              customerMobile: bill.customerMobile,
+              customerMobile: normalizedCustomerMobile,
               storeName,
               billNumber:     bill.billNumber || billNumber,
-              customerName:   bill.customerName || 'Customer',
+              customerName:   normalizedCustomerName,
               items:          (bill.items || []).map((i) => ({
                 productName: i.productName || i.name || 'Item',
                 qty:         i.qty,

@@ -232,11 +232,62 @@ export async function receiveBatchStock(client, {
   return batch;
 }
 
+export async function restoreBatchStock(client, {
+  batchId,
+  productId,
+  storeId,
+  qty,
+  referenceType = 'sales_return',
+  referenceId = null,
+  sourceItemId = null,
+  meta = {},
+}) {
+  await ensureInventoryBatchSchema();
+
+  const quantity = toNumber(qty);
+  const normalizedBatchId = Number(batchId);
+  if (!normalizedBatchId || !productId || !storeId || quantity <= 0) return null;
+
+  const batchRes = await client.query(
+    `UPDATE inventory_batches
+     SET available_qty = available_qty + $1,
+         status = 'active',
+         updated_at = NOW()
+     WHERE id = $2
+       AND product_id = $3
+       AND store_id = $4
+     RETURNING *`,
+    [quantity, normalizedBatchId, Number(productId), Number(storeId)]
+  );
+
+  const batch = batchRes.rows[0];
+  if (!batch) return null;
+
+  await client.query(
+    `INSERT INTO inventory_batch_movements (
+       batch_id, product_id, store_id, direction, qty, reference_type, reference_id, source_item_id, meta
+     ) VALUES ($1, $2, $3, 'in', $4, $5, $6, $7, $8::jsonb)`,
+    [
+      batch.id,
+      Number(productId),
+      Number(storeId),
+      quantity,
+      referenceType,
+      referenceId ? String(referenceId) : null,
+      sourceItemId,
+      JSON.stringify(meta),
+    ]
+  );
+
+  return batch;
+}
+
 export async function allocateBatchStock(client, {
   productId,
   storeId,
   qty,
   preferredBatchId = null,
+  allowedBatchIds = [],
   strategy = 'FEFO',
   referenceType = 'stock_out',
   referenceId = null,
@@ -253,10 +304,24 @@ export async function allocateBatchStock(client, {
   const expiryGuard = allowExpired ? '' : 'AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)';
   const preferredId = Number(preferredBatchId);
   const hasPreferredBatch = Number.isFinite(preferredId) && preferredId > 0;
-  const preferredGuard = hasPreferredBatch ? 'AND id = $3' : '';
+  const allowedIds = (Array.isArray(allowedBatchIds) ? allowedBatchIds : [])
+    .map(Number)
+    .filter((id) => Number.isFinite(id) && id > 0);
+  const hasAllowedBatches = !hasPreferredBatch && allowedIds.length > 0;
+  const batchGuard = hasPreferredBatch
+    ? 'AND id = $3'
+    : hasAllowedBatches
+      ? 'AND id = ANY($3::bigint[])'
+      : '';
   const orderBy = mode === 'FIFO'
     ? 'created_at ASC, id ASC'
     : 'CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END ASC, expiry_date ASC, created_at ASC, id ASC';
+
+  const params = hasPreferredBatch
+    ? [Number(productId), Number(storeId), preferredId]
+    : hasAllowedBatches
+      ? [Number(productId), Number(storeId), allowedIds]
+      : [Number(productId), Number(storeId)];
 
   const batchRes = await client.query(
     `SELECT id, product_id, store_id, batch_no, mfg_date, expiry_date, available_qty, cost_price, meta
@@ -266,10 +331,10 @@ export async function allocateBatchStock(client, {
        AND status = 'active'
        AND available_qty > 0
        ${expiryGuard}
-       ${preferredGuard}
+       ${batchGuard}
      ORDER BY ${orderBy}
      FOR UPDATE`,
-    hasPreferredBatch ? [Number(productId), Number(storeId), preferredId] : [Number(productId), Number(storeId)]
+    params
   );
 
   let remaining = requiredQty;
