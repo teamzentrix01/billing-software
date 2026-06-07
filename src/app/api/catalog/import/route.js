@@ -2,6 +2,7 @@ import { getClient, query } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { ensureCatalogExtrasSchema } from "@/lib/catalogExtrasSchema";
 import { ensureStockInSchema } from "@/lib/stockInSchema";
+import { generateProductBarcode, normalizeBarcode } from "@/lib/productBarcode";
 import {
   requireAuth,
   requirePermission,
@@ -611,6 +612,14 @@ async function insertProductWithIntegrations(client, row, user) {
   );
 
   const createdProduct = insert.rows[0];
+  if (!normalizeBarcode(createdProduct.barcode)) {
+    const generatedBarcode = generateProductBarcode(createdProduct.id);
+    const barcodeUpdate = await client.query(
+      "UPDATE products SET barcode = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+      [generatedBarcode, createdProduct.id],
+    );
+    Object.assign(createdProduct, barcodeUpdate.rows[0]);
+  }
   const openingStockQty = toNumber(row.opening_stock_qty, 0);
   const manageInventoryEnabled = toBoolean(row.manage_inventory_enabled, true);
 

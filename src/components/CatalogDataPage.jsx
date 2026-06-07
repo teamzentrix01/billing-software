@@ -1,21 +1,22 @@
-'use client';
+"use client";
 
-import { useCallback, useEffect, useState } from 'react';
-import CatalogListPage from '@/components/CatalogListPage';
+import { useCallback, useEffect, useState } from "react";
+import CatalogListPage from "@/components/CatalogListPage";
 
 export default function CatalogDataPage({
   endpoint,
   breadcrumbs = [],
-  title = '',
-  description = '',
+  title = "",
+  description = "",
   columns = [],
   mapRecord = (record, index) => ({ id: record.id ?? index, ...record }),
-  totalLabel = 'Record(s)',
-  emptyMessage = 'No records found',
+  totalLabel = "Record(s)",
+  emptyMessage = "No records found",
   onCreateClick,
   createLabel = null,
   bulkOperations = true,
   bulkImportType = null,
+  customBulkActions = [],
   showRowActions = false,
   onEdit,
   onDelete,
@@ -27,12 +28,12 @@ export default function CatalogDataPage({
   const [totalPages, setTotalPages] = useState(1);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [deleteId, setDeleteId] = useState(null);
   const [toast, setToast] = useState(null);
 
-  const showToast = useCallback((msg, type = 'success') => {
+  const showToast = useCallback((msg, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   }, []);
@@ -46,11 +47,15 @@ export default function CatalogDataPage({
       });
 
       if (search) {
-        params.set('search', search);
+        params.set("search", search);
       }
 
       Object.entries(extraQueryParams || {}).forEach(([key, value]) => {
-        if (value !== undefined && value !== null && String(value).trim() !== '') {
+        if (
+          value !== undefined &&
+          value !== null &&
+          String(value).trim() !== ""
+        ) {
           params.set(key, String(value));
         }
       });
@@ -63,10 +68,13 @@ export default function CatalogDataPage({
         setTotal(json.data.total || 0);
         setTotalPages(json.data.totalPages || 1);
       } else {
-        showToast(json.message || `Failed to load ${title.toLowerCase()}`, 'error');
+        showToast(
+          json.message || `Failed to load ${title.toLowerCase()}`,
+          "error",
+        );
       }
     } catch {
-      showToast('Network error', 'error');
+      showToast("Network error", "error");
     } finally {
       setLoading(false);
     }
@@ -88,30 +96,34 @@ export default function CatalogDataPage({
     if (!deleteId) return;
 
     try {
-      const res = await fetch(`${endpoint}/${deleteId}`, { method: 'DELETE' });
+      const res = await fetch(`${endpoint}/${deleteId}`, { method: "DELETE" });
       const json = await res.json();
 
       if (json.success) {
         showToast(`${title} deleted`);
         fetchData();
       } else {
-        showToast(json.message || 'Delete failed', 'error');
+        showToast(json.message || "Delete failed", "error");
       }
     } catch {
-      showToast('Delete failed', 'error');
+      showToast("Delete failed", "error");
     }
 
     setDeleteId(null);
   };
 
-  const rows = records.map((record, index) => mapRecord(record, index, page, pageSize));
+  const rows = records.map((record, index) =>
+    mapRecord(record, index, page, pageSize),
+  );
 
   return (
     <>
       {toast && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all ${
-          toast.type === 'success' ? 'bg-green-500' : 'bg-red-500'
-        }`}>
+        <div
+          className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium transition-all ${
+            toast.type === "success" ? "bg-green-500" : "bg-red-500"
+          }`}
+        >
           {toast.msg}
         </div>
       )}
@@ -119,8 +131,12 @@ export default function CatalogDataPage({
       {deleteId && (
         <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/50">
           <div className="bg-white rounded-xl shadow-2xl p-6 w-80 relative z-[1000]">
-            <h3 className="text-base font-bold text-gray-800 mb-2">Delete {title}?</h3>
-            <p className="text-sm text-gray-500 mb-5">This action cannot be undone.</p>
+            <h3 className="text-base font-bold text-gray-800 mb-2">
+              Delete {title}?
+            </h3>
+            <p className="text-sm text-gray-500 mb-5">
+              This action cannot be undone.
+            </p>
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setDeleteId(null)}
@@ -148,6 +164,7 @@ export default function CatalogDataPage({
         onCreateClick={onCreateClick}
         bulkOperations={bulkOperations}
         bulkImportType={bulkImportType}
+        customBulkActions={customBulkActions}
         endpoint={endpoint}
         extraQueryParams={extraQueryParams}
         columns={columns}

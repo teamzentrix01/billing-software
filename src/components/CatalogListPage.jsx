@@ -127,6 +127,7 @@ export default function CatalogListPage({
   onCreateClick,
   bulkOperations = true,
   bulkImportType = null, // 'categories' | 'sub-categories'
+  customBulkActions = [],
   endpoint = "",
   extraQueryParams = null,
   columns = [],
@@ -677,9 +678,15 @@ export default function CatalogListPage({
     }
   };
 
+  const resolvedCustomBulkActions = (customBulkActions || []).map((item) => ({
+    ...item,
+    action: () => item.action?.({ selectedIds: checkedRows, rows, showToast }),
+  }));
+
   const bulkMenuItems =
     bulkImportType === "products"
       ? [
+          ...resolvedCustomBulkActions,
           {
             label: "Import Products (Excel)",
             action: () => fileRef.current?.click(),
@@ -701,6 +708,7 @@ export default function CatalogListPage({
         ]
       : bulkImportType === "product-groups"
         ? [
+            ...resolvedCustomBulkActions,
             {
               label: "Import Product Groups (Excel)",
               action: () => fileRef.current?.click(),
@@ -721,6 +729,7 @@ export default function CatalogListPage({
             },
           ]
         : [
+            ...resolvedCustomBulkActions,
             ...(bulkImportType
               ? [
                   { label: `Create ${title}`, action: onCreateClick },

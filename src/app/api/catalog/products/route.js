@@ -1,10 +1,23 @@
-import { query, getClient } from '@/lib/db';
-import { successResponse, errorResponse, validationError } from '@/lib/api-response';
-import { ensureStockInSchema } from '@/lib/stockInSchema';
-import { ensureStockOutSchema } from '@/lib/stockOutSchema';
-import { ensureSalesBillingSchema } from '@/lib/salesBillingSchema';
-import { ensureInventoryBatchSchema, receiveBatchStock } from '@/lib/inventoryBatching';
-import { getAssignedStoreIds, requireAuth, requirePermission, requireStore } from '@/lib/api-protection';
+import { query, getClient } from "@/lib/db";
+import {
+  successResponse,
+  errorResponse,
+  validationError,
+} from "@/lib/api-response";
+import { ensureStockInSchema } from "@/lib/stockInSchema";
+import { ensureStockOutSchema } from "@/lib/stockOutSchema";
+import { ensureSalesBillingSchema } from "@/lib/salesBillingSchema";
+import {
+  ensureInventoryBatchSchema,
+  receiveBatchStock,
+} from "@/lib/inventoryBatching";
+import {
+  getAssignedStoreIds,
+  requireAuth,
+  requirePermission,
+  requireStore,
+} from "@/lib/api-protection";
+import { generateProductBarcode, normalizeBarcode } from "@/lib/productBarcode";
 
 async function ensureProductDiscountSchema() {
   await query(`
@@ -25,21 +38,30 @@ async function ensureProductDiscountSchema() {
 }
 
 function normalizeUnit(value) {
-  const unit = String(value || 'PCS').trim().toUpperCase();
-  if (['G', 'GM', 'GRAM', 'GRAMS'].includes(unit)) return 'GRAMS';
-  return ['PCS', 'KG', 'GRAMS', 'LTR'].includes(unit) ? unit : 'PCS';
+  const unit = String(value || "PCS")
+    .trim()
+    .toUpperCase();
+  if (["G", "GM", "GRAM", "GRAMS"].includes(unit)) return "GRAMS";
+  return ["PCS", "KG", "GRAMS", "LTR"].includes(unit) ? unit : "PCS";
 }
 
 function normalizeStockItemType(value) {
-  return String(value || '').trim().toLowerCase() === 'batched' ? 'batched' : 'unbatched';
+  return String(value || "")
+    .trim()
+    .toLowerCase() === "batched"
+    ? "batched"
+    : "unbatched";
 }
 
-async function validateBarcodeAvailability(client, { barcode, stockItemType, excludeId = null }) {
-  const normalizedBarcode = String(barcode || '').trim();
+async function validateBarcodeAvailability(
+  client,
+  { barcode, stockItemType, excludeId = null },
+) {
+  const normalizedBarcode = String(barcode || "").trim();
   if (!normalizedBarcode) return null;
 
   const params = [normalizedBarcode];
-  const excludeClause = excludeId ? `AND id <> $2` : '';
+  const excludeClause = excludeId ? `AND id <> $2` : "";
   if (excludeId) params.push(Number(excludeId));
 
   const duplicates = await client.query(
@@ -48,12 +70,16 @@ async function validateBarcodeAvailability(client, { barcode, stockItemType, exc
      WHERE barcode = $1
        ${excludeClause}
      LIMIT 5`,
-    params
+    params,
   );
   if (!duplicates.rows.length) return null;
 
   const incomingType = normalizeStockItemType(stockItemType);
-  const blocked = duplicates.rows.find((row) => normalizeStockItemType(row.stock_item_type) !== 'batched' || incomingType !== 'batched');
+  const blocked = duplicates.rows.find(
+    (row) =>
+      normalizeStockItemType(row.stock_item_type) !== "batched" ||
+      incomingType !== "batched",
+  );
   if (blocked) {
     return `Barcode already used by "${blocked.name}". Duplicate barcodes are allowed only when both products are batched.`;
   }
@@ -74,39 +100,58 @@ export async function GET(request) {
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
 
-    const permissionCheck = requirePermission(auth.user, 'VIEW_CATALOG', 'MANAGE_CATALOG');
+    const permissionCheck = requirePermission(
+      auth.user,
+      "VIEW_CATALOG",
+      "MANAGE_CATALOG",
+    );
     if (permissionCheck.error) return permissionCheck.error;
 
     const { searchParams } = new URL(request.url);
-    const search      = searchParams.get('search')   || '';
-    const department_id = searchParams.get('department_id') || '';
-    const category_id = searchParams.get('category_id') || '';
-    const brand_id    = searchParams.get('brand_id')    || '';
-    const is_active   = searchParams.get('is_active');
-    const page        = parseInt(searchParams.get('page')     || '1');
-    const pageSize    = parseInt(searchParams.get('pageSize') || '10');
-    const offset      = (page - 1) * pageSize;
-    const requestedStoreId = Number(searchParams.get('store_id') || 0) || null;
+    const search = searchParams.get("search") || "";
+    const idsParam = searchParams.get("ids") || "";
+    const department_id = searchParams.get("department_id") || "";
+    const category_id = searchParams.get("category_id") || "";
+    const brand_id = searchParams.get("brand_id") || "";
+    const is_active = searchParams.get("is_active");
+    const page = parseInt(searchParams.get("page") || "1");
+    const pageSize = parseInt(searchParams.get("pageSize") || "10");
+    const offset = (page - 1) * pageSize;
+    const requestedStoreId = Number(searchParams.get("store_id") || 0) || null;
 
     const conditions = [];
     const params = [];
     let i = 1;
-    let stockStoreFilter = '';
+    let stockStoreFilter = "";
+    const requestedIds = idsParam
+      .split(",")
+      .map((value) => Number(value.trim()))
+      .filter((value) => Number.isFinite(value) && value > 0);
+
+    if (requestedIds.length) {
+      conditions.push(`p.id = ANY($${i}::int[])`);
+      params.push(requestedIds);
+      i++;
+    }
 
     if (requestedStoreId) {
       const storeCheck = requireStore(auth.user, requestedStoreId);
       if (storeCheck.error) return storeCheck.error;
-      conditions.push(`EXISTS (SELECT 1 FROM product_saleability ps_scope WHERE ps_scope.product_id = p.id AND ps_scope.store_id = $${i} AND ps_scope.is_active = TRUE)`);
+      conditions.push(
+        `EXISTS (SELECT 1 FROM product_saleability ps_scope WHERE ps_scope.product_id = p.id AND ps_scope.store_id = $${i} AND ps_scope.is_active = TRUE)`,
+      );
       params.push(requestedStoreId);
       stockStoreFilter = `AND store_id = $${i}`;
       i++;
-    } else if (auth.user.role !== 'super_admin') {
+    } else if (auth.user.role !== "super_admin") {
       const assignedStores = getAssignedStoreIds(auth.user);
       if (!assignedStores.length) {
-        conditions.push('1 = 0');
-        stockStoreFilter = 'AND 1 = 0';
+        conditions.push("1 = 0");
+        stockStoreFilter = "AND 1 = 0";
       } else {
-        conditions.push(`EXISTS (SELECT 1 FROM product_saleability ps_scope WHERE ps_scope.product_id = p.id AND ps_scope.store_id = ANY($${i}::int[]) AND ps_scope.is_active = TRUE)`);
+        conditions.push(
+          `EXISTS (SELECT 1 FROM product_saleability ps_scope WHERE ps_scope.product_id = p.id AND ps_scope.store_id = ANY($${i}::int[]) AND ps_scope.is_active = TRUE)`,
+        );
         params.push(assignedStores);
         stockStoreFilter = `AND store_id = ANY($${i}::int[])`;
         i++;
@@ -114,7 +159,9 @@ export async function GET(request) {
     }
 
     if (search) {
-      conditions.push(`(p.name ILIKE $${i} OR p.barcode ILIKE $${i} OR p.sku ILIKE $${i} OR p.product_id ILIKE $${i})`);
+      conditions.push(
+        `(p.name ILIKE $${i} OR p.barcode ILIKE $${i} OR p.sku ILIKE $${i} OR p.product_id ILIKE $${i})`,
+      );
       params.push(`%${search}%`);
       i++;
     }
@@ -133,17 +180,17 @@ export async function GET(request) {
       params.push(brand_id);
       i++;
     }
-    if (is_active !== null && is_active !== '') {
+    if (is_active !== null && is_active !== "") {
       conditions.push(`p.is_active = $${i}`);
-      params.push(is_active === 'true');
+      params.push(is_active === "true");
       i++;
     }
 
-    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const countResult = await query(
       `SELECT COUNT(*) FROM products p ${where}`,
-      params
+      params,
     );
     const total = parseInt(countResult.rows[0].count);
 
@@ -183,7 +230,7 @@ export async function GET(request) {
        ${where}
        ORDER BY p.id DESC
        LIMIT $${i} OFFSET $${i + 1}`,
-      [...params, pageSize, offset]
+      [...params, pageSize, offset],
     );
 
     return successResponse({
@@ -207,25 +254,25 @@ export async function POST(request) {
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
 
-    const permissionCheck = requirePermission(auth.user, 'MANAGE_CATALOG');
+    const permissionCheck = requirePermission(auth.user, "MANAGE_CATALOG");
     if (permissionCheck.error) return permissionCheck.error;
 
     const body = await request.json();
     const { name } = body;
 
     if (!name?.trim()) {
-      return validationError({ name: 'Product name is required' });
+      return validationError({ name: "Product name is required" });
     }
 
     const client = await getClient();
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
       const barcodeError = await validateBarcodeAvailability(client, {
         barcode: body.barcode,
         stockItemType: body.stock_item_type,
       });
       if (barcodeError) {
-        await client.query('ROLLBACK');
+        await client.query("ROLLBACK");
         return validationError({ barcode: barcodeError }, barcodeError);
       }
 
@@ -268,25 +315,35 @@ export async function POST(request) {
           body.allow_discount_on_pos ?? false,
           body.include_tax ?? false,
           normalizeStockItemType(body.stock_item_type),
-          body.inventory_method || 'direct',
+          body.inventory_method || "direct",
           body.hsn_code || null,
           body.charge_id || null,
-        ]
+        ],
       );
 
       const createdProduct = result.rows[0];
+      if (!normalizeBarcode(createdProduct.barcode)) {
+        const generatedBarcode = generateProductBarcode(createdProduct.id);
+        const barcodeUpdate = await client.query(
+          "UPDATE products SET barcode = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
+          [generatedBarcode, createdProduct.id],
+        );
+        Object.assign(createdProduct, barcodeUpdate.rows[0]);
+      }
       const openingStockQty = Number(body.opening_stock_qty || 0);
-      const inventoryStoreId = body.inventory_store_id ? Number(body.inventory_store_id) : null;
+      const inventoryStoreId = body.inventory_store_id
+        ? Number(body.inventory_store_id)
+        : null;
       const manageInventoryEnabled = body.manage_inventory_enabled !== false;
       if (inventoryStoreId) {
         const storeCheck = requireStore(auth.user, inventoryStoreId);
         if (storeCheck.error) {
-          await client.query('ROLLBACK');
+          await client.query("ROLLBACK");
           return storeCheck.error;
         }
-      } else if (openingStockQty > 0 && auth.user.role !== 'super_admin') {
-        await client.query('ROLLBACK');
-        return errorResponse('Store is required for opening stock', 403);
+      } else if (openingStockQty > 0 && auth.user.role !== "super_admin") {
+        await client.query("ROLLBACK");
+        return errorResponse("Store is required for opening stock", 403);
       }
 
       if (manageInventoryEnabled && openingStockQty > 0) {
@@ -337,24 +394,37 @@ export async function POST(request) {
             openingStockQty * Number(body.cost_price || 0),
             String(createdProduct.id),
             JSON.stringify({
-              source: 'product-create',
+              source: "product-create",
               disable_billing_on_zero: !!body.disable_billing_on_zero,
               disable_sales_on_expiry: !!body.disable_sales_on_expiry,
-              inventory_method: body.inventory_method || 'direct',
-              stock_item_type: body.stock_item_type || 'unbatched',
-              default_low_stock_value: Number(body.default_low_stock_value || 0),
-              minimum_base_quantity: Number(body.minimum_base_quantity || body.mbq || 0),
+              inventory_method: body.inventory_method || "direct",
+              stock_item_type: body.stock_item_type || "unbatched",
+              default_low_stock_value: Number(
+                body.default_low_stock_value || 0,
+              ),
+              minimum_base_quantity: Number(
+                body.minimum_base_quantity || body.mbq || 0,
+              ),
             }),
-          ]
+          ],
         );
 
         const stockInId = stockInInsert.rows[0].id;
-        await client.query('UPDATE stock_in SET transaction_id = $1 WHERE id = $2', [`STK-${String(stockInId).padStart(4, '0')}`, stockInId]);
+        await client.query(
+          "UPDATE stock_in SET transaction_id = $1 WHERE id = $2",
+          [`STK-${String(stockInId).padStart(4, "0")}`, stockInId],
+        );
         const stockInItemRes = await client.query(
           `INSERT INTO stock_in_items (stock_in_id, product_id, product_name, qty, cost_price, tax_value, created_at)
            VALUES ($1, $2, $3, $4, $5, 0, NOW())
            RETURNING id`,
-          [stockInId, createdProduct.id, createdProduct.name, openingStockQty, Number(body.cost_price || 0)]
+          [
+            stockInId,
+            createdProduct.id,
+            createdProduct.name,
+            openingStockQty,
+            Number(body.cost_price || 0),
+          ],
         );
 
         await receiveBatchStock(client, {
@@ -367,21 +437,25 @@ export async function POST(request) {
           batchNo: body.batch_no || body.batchNo || `OPEN-${createdProduct.id}`,
           mfgDate: body.mfg_date || body.mfgDate || null,
           expiryDate: body.expiry_date || body.expiryDate || null,
-          meta: { source: 'product-create', productName: createdProduct.name },
+          meta: { source: "product-create", productName: createdProduct.name },
         });
       }
 
-      await client.query('COMMIT');
-      return successResponse(createdProduct, 'Product created successfully', 201);
+      await client.query("COMMIT");
+      return successResponse(
+        createdProduct,
+        "Product created successfully",
+        201,
+      );
     } catch (err) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw err;
     } finally {
       client.release();
     }
   } catch (err) {
-    if (err.code === '23505') {
-      return errorResponse('Product with this SKU already exists', 409);
+    if (err.code === "23505") {
+      return errorResponse("Product with this SKU already exists", 409);
     }
     return errorResponse(err.message);
   }
