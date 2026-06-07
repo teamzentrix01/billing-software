@@ -245,6 +245,19 @@ function parseBridgeScalePayload(payload) {
   return numeric;
 }
 
+function preferBulkEndpoint(endpoints, direction) {
+  const matches = (endpoints || []).filter(
+    (endpoint) =>
+      endpoint.direction === direction &&
+      ["bulk", "interrupt"].includes(endpoint.type),
+  );
+  return (
+    matches.find((endpoint) => endpoint.type === "bulk") ||
+    matches.find((endpoint) => endpoint.type === "interrupt") ||
+    null
+  );
+}
+
 function formatCurrency(value) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -778,6 +791,11 @@ export default function POSPage() {
           await device.controlTransferOut(setup, data);
         } catch {}
       };
+      const safeControlIn = async (setup, length = 1) => {
+        try {
+          await device.controlTransferIn(setup, length);
+        } catch {}
+      };
 
       await safeControlOut(
         {
@@ -809,6 +827,34 @@ export default function POSPage() {
           requestType: "vendor",
           recipient: "device",
           request: 0x9a,
+          value: 0x1312,
+          index: 0xd982,
+        });
+        await safeControlOut({
+          requestType: "vendor",
+          recipient: "device",
+          request: 0x9a,
+          value: 0x0f2c,
+          index: 0x0004,
+        });
+        await safeControlOut({
+          requestType: "vendor",
+          recipient: "device",
+          request: 0xa4,
+          value: 0xff,
+          index: 0,
+        });
+        await safeControlOut({
+          requestType: "vendor",
+          recipient: "device",
+          request: 0xa1,
+          value: 0,
+          index: 0,
+        });
+        await safeControlOut({
+          requestType: "vendor",
+          recipient: "device",
+          request: 0x9a,
           value: 0x2518,
           index: 0x0050,
         });
@@ -818,6 +864,57 @@ export default function POSPage() {
           request: 0x9a,
           value: 0x2518,
           index: 0x0050,
+        });
+      }
+
+      if (device.vendorId === 0x067b) {
+        const vendorIn = (value, index = 0) =>
+          safeControlIn(
+            {
+              requestType: "vendor",
+              recipient: "device",
+              request: 0x01,
+              value,
+              index,
+            },
+            1,
+          );
+        const vendorOut = (value, index = 0) =>
+          safeControlOut({
+            requestType: "vendor",
+            recipient: "device",
+            request: 0x01,
+            value,
+            index,
+          });
+
+        await vendorIn(0x8484);
+        await vendorOut(0x0404);
+        await vendorIn(0x8484);
+        await vendorIn(0x8383);
+        await vendorIn(0x8484);
+        await vendorOut(0x0404, 1);
+        await vendorIn(0x8484);
+        await vendorIn(0x8383);
+        await vendorOut(0, 1);
+        await vendorOut(1, 0);
+        await vendorOut(2, 0x44);
+      }
+
+      if (device.vendorId === 0x10c4) {
+        await safeControlOut({
+          requestType: "vendor",
+          recipient: "interface",
+          request: 0x00,
+          value: 0x0001,
+          index: interfaceNumber,
+        });
+        await safeControlOut({
+          requestType: "vendor",
+          recipient: "interface",
+          request: 0x07,
+          value: 0x0303,
+          index: interfaceNumber,
         });
       }
     },
@@ -875,21 +972,12 @@ export default function POSPage() {
       let outputEndpoint = null;
       for (const usbInterface of device.configuration.interfaces || []) {
         for (const alternate of usbInterface.alternates || []) {
-          const endpoint = (alternate.endpoints || []).find(
-            (candidate) =>
-              candidate.direction === "in" &&
-              ["bulk", "interrupt"].includes(candidate.type),
-          );
+          const endpoint = preferBulkEndpoint(alternate.endpoints, "in");
           if (endpoint) {
             selectedInterface = usbInterface;
             selectedAlternate = alternate;
             inputEndpoint = endpoint;
-            outputEndpoint =
-              (alternate.endpoints || []).find(
-                (candidate) =>
-                  candidate.direction === "out" &&
-                  ["bulk", "interrupt"].includes(candidate.type),
-              ) || null;
+            outputEndpoint = preferBulkEndpoint(alternate.endpoints, "out");
             break;
           }
         }
@@ -2683,7 +2771,9 @@ export default function POSPage() {
             mode to continuous / print output at 9600 baud, 8 data bits, no
             parity, 1 stop bit.{" "}
             {scaleLastData ? (
-              <span className="font-black">Last data: {scaleLastData}</span>
+              <span className="block break-all font-mono font-black">
+                Last data: {scaleLastData}
+              </span>
             ) : (
               <span className="font-black">No raw data received.</span>
             )}
