@@ -71,6 +71,36 @@ const EAGLE_SCALE_SERIAL_OPTIONS = {
   flowControl: "none",
 };
 
+function signedByte(value) {
+  return value > 127 ? value - 256 : value;
+}
+
+function parseUsbScaleWeight(data) {
+  if (!data) return null;
+  const bytes =
+    data instanceof Uint8Array
+      ? data
+      : new Uint8Array(
+          data.buffer || data,
+          data.byteOffset || 0,
+          data.byteLength,
+        );
+  if (!bytes.length) return null;
+
+  for (const offset of [0, 1]) {
+    if (bytes.length < offset + 6) continue;
+    const unit = bytes[offset + 2];
+    const exponent = signedByte(bytes[offset + 3]);
+    const rawWeight = bytes[offset + 4] | (bytes[offset + 5] << 8);
+    if (!rawWeight || rawWeight > 300000) continue;
+    const scaledWeight = rawWeight * 10 ** exponent;
+    if (!Number.isFinite(scaledWeight) || scaledWeight < 0) continue;
+    if (unit === 2) return scaledWeight / 1000; // grams
+    if (unit === 3) return scaledWeight; // kilograms
+  }
+  return null;
+}
+
 function parseScaleWeight(rawValue) {
   const text = String(rawValue || "")
     .replace(/,/g, ".")
@@ -539,6 +569,81 @@ export default function POSPage() {
     return true;
   }, []);
 
+  const applyUsbScaleData = useCallback(
+    (data) => {
+      const binaryWeightKg = parseUsbScaleWeight(data);
+      if (binaryWeightKg !== null) {
+        return applyScaleWeightReading(`${binaryWeightKg.toFixed(3)}kg`);
+      }
+      return applyScaleWeightReading(new TextDecoder().decode(data));
+    },
+    [applyScaleWeightReading],
+  );
+
+  const configureUsbSerialAdapter = useCallback(
+    async (device, interfaceNumber) => {
+      const baudRate = EAGLE_SCALE_SERIAL_OPTIONS.baudRate;
+      const lineCoding = new Uint8Array([
+        baudRate & 0xff,
+        (baudRate >> 8) & 0xff,
+        (baudRate >> 16) & 0xff,
+        (baudRate >> 24) & 0xff,
+        0,
+        0,
+        8,
+      ]);
+
+      const safeControlOut = async (setup, data) => {
+        try {
+          await device.controlTransferOut(setup, data);
+        } catch {}
+      };
+
+      await safeControlOut(
+        {
+          requestType: "class",
+          recipient: "interface",
+          request: 0x20,
+          value: 0,
+          index: interfaceNumber,
+        },
+        lineCoding,
+      );
+      await safeControlOut({
+        requestType: "class",
+        recipient: "interface",
+        request: 0x22,
+        value: 0x03,
+        index: interfaceNumber,
+      });
+
+      if (device.vendorId === 0x1a86) {
+        await safeControlOut({
+          requestType: "vendor",
+          recipient: "device",
+          request: 0xa1,
+          value: 0,
+          index: 0,
+        });
+        await safeControlOut({
+          requestType: "vendor",
+          recipient: "device",
+          request: 0x9a,
+          value: 0x2518,
+          index: 0x0050,
+        });
+        await safeControlOut({
+          requestType: "vendor",
+          recipient: "device",
+          request: 0x9a,
+          value: 0x2518,
+          index: 0x0050,
+        });
+      }
+    },
+    [],
+  );
+
   const disconnectScale = useCallback(async () => {
     scaleUsbLoopRef.current = false;
     try {
@@ -603,6 +708,10 @@ export default function POSPage() {
       }
 
       await device.claimInterface(selectedInterface.interfaceNumber);
+      await configureUsbSerialAdapter(
+        device,
+        selectedInterface.interfaceNumber,
+      );
       if (selectedAlternate?.alternateSetting) {
         await device.selectAlternateInterface(
           selectedInterface.interfaceNumber,
@@ -613,7 +722,7 @@ export default function POSPage() {
       scaleUsbDeviceRef.current = device;
       scaleUsbLoopRef.current = true;
       setScaleConnected(true);
-      setScaleStatus("Scale connected · USB");
+      setScaleStatus("Connected · waiting");
       showToast("Weighing scale connected through USB", "success");
 
       const decoder = new TextDecoder();
@@ -625,6 +734,7 @@ export default function POSPage() {
         );
         if (!scaleUsbLoopRef.current) break;
         if (!result?.data) continue;
+        applyUsbScaleData(result.data);
         buffer += decoder.decode(result.data, { stream: true });
         const chunks = buffer.split(/\r?\n/);
         buffer = chunks.pop() || "";
@@ -650,7 +760,7 @@ export default function POSPage() {
         await device?.close();
       } catch {}
     }
-  }, [applyScaleWeightReading]);
+  }, [applyScaleWeightReading, applyUsbScaleData, configureUsbSerialAdapter]);
 
   const connectScale = useCallback(async () => {
     if (typeof navigator === "undefined" || !navigator.serial) {
@@ -1197,7 +1307,9 @@ export default function POSPage() {
     const scaleQty = Number(scaleWeightKg.toFixed(3));
     if (weighted && scaleQty <= 0) {
       showToast(
-        "Place item on weighing scale before adding this product.",
+        scaleConnected
+          ? "Scale is connected but no weight reading received yet. Check scale mode/cable, then try again."
+          : "Connect scale and place item before adding this product.",
         "error",
       );
       return;
