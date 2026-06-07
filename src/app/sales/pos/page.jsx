@@ -57,6 +57,9 @@ function getScaleQuantityForUnit(weightKg, weightedUnit) {
 
 function formatScaleWeight(weightKg) {
   const normalizedWeight = Number(Number(weightKg || 0).toFixed(3));
+  if (!Number.isFinite(normalizedWeight) || normalizedWeight <= 0) {
+    return "0 g";
+  }
   if (normalizedWeight < 1) {
     return `${Math.round(normalizedWeight * 1000)} g`;
   }
@@ -172,9 +175,21 @@ function parseUsbScaleWeight(data) {
     const rawWeight = bytes[offset + 4] | (bytes[offset + 5] << 8);
     if (!rawWeight || rawWeight > 300000) continue;
     const scaledWeight = rawWeight * 10 ** exponent;
-    if (!Number.isFinite(scaledWeight) || scaledWeight < 0) continue;
-    if (unit === 2) return scaledWeight / 1000; // grams
-    if (unit === 3) return scaledWeight; // kilograms
+    if (
+      !Number.isFinite(scaledWeight) ||
+      scaledWeight < 0 ||
+      exponent < -4 ||
+      exponent > 0
+    ) {
+      continue;
+    }
+    if (unit === 2) {
+      const weightKg = scaledWeight / 1000;
+      if (weightKg >= 0 && weightKg <= 30) return weightKg; // grams
+    }
+    if (unit === 3 && scaledWeight >= 0 && scaledWeight <= 30) {
+      return scaledWeight; // kilograms
+    }
   }
   return parseScaleWeightFromBytes(bytes);
 }
@@ -196,7 +211,7 @@ function parseScaleWeight(rawValue) {
 
   if (!/[a-z]/i.test(compact) && /^[+-]?\d{1,3}\.\d{1,4}$/.test(compact)) {
     const value = Number(compact);
-    if (!Number.isFinite(value) || Math.abs(value) > 100) return null;
+    if (!Number.isFinite(value) || Math.abs(value) > 30) return null;
     return value <= 0 ? 0 : value;
   }
 
@@ -219,7 +234,10 @@ function parseScaleWeight(rawValue) {
   if (!Number.isFinite(value)) return null;
   if (value <= 0) return 0;
   const unit = String(match[2] || "kg").toLowerCase();
-  return ["g", "gm", "gram", "grams"].includes(unit) ? value / 1000 : value;
+  const weightKg = ["g", "gm", "gram", "grams"].includes(unit)
+    ? value / 1000
+    : value;
+  return weightKg >= 0 && weightKg <= 30 ? weightKg : null;
 }
 
 function parseBridgeScalePayload(payload) {
@@ -681,6 +699,11 @@ export default function POSPage() {
       if (weightKg === null) return false;
 
       const normalizedWeight = Number(weightKg.toFixed(3));
+      if (!Number.isFinite(normalizedWeight) || normalizedWeight > 30) {
+        setScaleWeightKg(0);
+        setScaleStatus("0 g");
+        return false;
+      }
       setScaleWeightKg(normalizedWeight);
       setScaleStatus(formatScaleWeight(normalizedWeight));
       const activeCartKey = activeScaleCartKeyRef.current;
@@ -705,19 +728,29 @@ export default function POSPage() {
     [noteScaleRawData],
   );
 
+  const applyScaleWeightKg = useCallback(
+    (weightKg) => {
+      if (!Number.isFinite(weightKg) || weightKg < 0 || weightKg > 30) {
+        return false;
+      }
+      return applyScaleWeightReading(`${weightKg.toFixed(3)}kg`);
+    },
+    [applyScaleWeightReading],
+  );
+
   const applyUsbScaleData = useCallback(
     (data) => {
       const printable = getPrintablePreview(data);
       noteScaleRawData(printable, data);
       const binaryWeightKg = parseUsbScaleWeight(data);
       if (binaryWeightKg !== null) {
-        return applyScaleWeightReading(`${binaryWeightKg.toFixed(3)}kg`);
+        return applyScaleWeightKg(binaryWeightKg);
       }
       return applyScaleWeightReading(
         printable || new TextDecoder().decode(data),
       );
     },
-    [applyScaleWeightReading, noteScaleRawData],
+    [applyScaleWeightKg, applyScaleWeightReading, noteScaleRawData],
   );
 
   const readScaleBridge = useCallback(async () => {
@@ -754,7 +787,7 @@ export default function POSPage() {
     setScaleConnected(true);
     setScaleStatus("Bridge connected");
     setScaleLastData(`Bridge ${firstReading.endpoint}`);
-    applyScaleWeightReading(`${firstReading.weightKg.toFixed(3)}kg`);
+    applyScaleWeightKg(firstReading.weightKg);
     showToast("Weighing scale connected through POS bridge", "success");
 
     if (scaleBridgeTimerRef.current) {
@@ -767,11 +800,11 @@ export default function POSPage() {
         return;
       }
       setScaleLastData(`Bridge ${reading.endpoint}`);
-      applyScaleWeightReading(`${reading.weightKg.toFixed(3)}kg`);
+      applyScaleWeightKg(reading.weightKg);
     }, 350);
 
     return true;
-  }, [applyScaleWeightReading, readScaleBridge]);
+  }, [applyScaleWeightKg, readScaleBridge]);
 
   const configureUsbSerialAdapter = useCallback(
     async (device, interfaceNumber) => {
