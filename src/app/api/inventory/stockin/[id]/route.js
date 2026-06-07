@@ -1,9 +1,16 @@
-import { NextResponse } from 'next/server';
-import { getClient, query } from '@/lib/db';
-import { ensureStockInSchema } from '@/lib/stockInSchema';
-import { ensureInventoryBatchSchema, receiveBatchStock } from '@/lib/inventoryBatching';
-import { requireAuth, requirePermission, requireStore } from '@/lib/api-protection';
-import { toDateInputValue } from '@/lib/dateUtils';
+import { NextResponse } from "next/server";
+import { getClient, query } from "@/lib/db";
+import { ensureStockInSchema } from "@/lib/stockInSchema";
+import {
+  ensureInventoryBatchSchema,
+  receiveBatchStock,
+} from "@/lib/inventoryBatching";
+import {
+  requireAuth,
+  requirePermission,
+  requireStore,
+} from "@/lib/api-protection";
+import { toDateInputValue } from "@/lib/dateUtils";
 
 function normalizeDate(value) {
   return toDateInputValue(value);
@@ -14,7 +21,7 @@ async function clearConfirmedStockInBatches(client, stockInId) {
 
   const oldItemsRes = await client.query(
     `SELECT id FROM stock_in_items WHERE stock_in_id = $1`,
-    [stockInId]
+    [stockInId],
   );
   const oldItemIds = oldItemsRes.rows.map((row) => String(row.id));
   if (!oldItemIds.length) return;
@@ -25,17 +32,22 @@ async function clearConfirmedStockInBatches(client, stockInId) {
      WHERE source_type = 'stock_in'
        AND source_id = ANY($1::text[])
      FOR UPDATE`,
-    [oldItemIds]
+    [oldItemIds],
   );
 
   const consumedBatch = batchRes.rows.find(
-    (batch) => Number(batch.available_qty || 0) < Number(batch.received_qty || 0)
+    (batch) =>
+      Number(batch.available_qty || 0) < Number(batch.received_qty || 0),
   );
   if (consumedBatch) {
-    throw new Error('This stock in cannot be edited directly because some quantity has already been used. Use Stock Validation/Adjustment for correction.');
+    throw new Error(
+      "This stock in cannot be edited directly because some quantity has already been used. Use Stock Validation/Adjustment for correction.",
+    );
   }
 
-  const batchIds = batchRes.rows.map((batch) => Number(batch.id)).filter(Boolean);
+  const batchIds = batchRes.rows
+    .map((batch) => Number(batch.id))
+    .filter(Boolean);
   if (!batchIds.length) return;
 
   await client.query(
@@ -44,12 +56,12 @@ async function clearConfirmedStockInBatches(client, stockInId) {
        AND direction = 'in'
        AND reference_type = 'stock_in'
        AND reference_id = $2`,
-    [batchIds, String(stockInId)]
+    [batchIds, String(stockInId)],
   );
   await client.query(
     `DELETE FROM inventory_batches
      WHERE id = ANY($1::bigint[])`,
-    [batchIds]
+    [batchIds],
   );
 }
 
@@ -58,7 +70,7 @@ async function deleteConfirmedStockInBatches(client, stockInId) {
 
   const oldItemsRes = await client.query(
     `SELECT id FROM stock_in_items WHERE stock_in_id = $1`,
-    [stockInId]
+    [stockInId],
   );
   const oldItemIds = oldItemsRes.rows.map((row) => String(row.id));
   if (!oldItemIds.length) return;
@@ -69,14 +81,17 @@ async function deleteConfirmedStockInBatches(client, stockInId) {
      WHERE source_type = 'stock_in'
        AND source_id = ANY($1::text[])
      FOR UPDATE`,
-    [oldItemIds]
+    [oldItemIds],
   );
 
   const consumedBatch = batchRes.rows.find(
-    (batch) => Number(batch.available_qty || 0) < Number(batch.received_qty || 0)
+    (batch) =>
+      Number(batch.available_qty || 0) < Number(batch.received_qty || 0),
   );
   if (consumedBatch) {
-    throw new Error('This stock in cannot be deleted because some quantity has already been used.');
+    throw new Error(
+      "This stock in cannot be deleted because some quantity has already been used.",
+    );
   }
 
   for (const batch of batchRes.rows) {
@@ -90,7 +105,7 @@ async function deleteConfirmedStockInBatches(client, stockInId) {
              updated_at = NOW()
          WHERE id = $2
          RETURNING id, product_id, store_id`,
-        [qty, sourceBatchId]
+        [qty, sourceBatchId],
       );
       const restored = restoredRes.rows[0];
       if (restored) {
@@ -105,22 +120,27 @@ async function deleteConfirmedStockInBatches(client, stockInId) {
             qty,
             String(stockInId),
             JSON.stringify({ deletedDestinationBatchId: Number(batch.id) }),
-          ]
+          ],
         );
       }
     }
   }
 
-  const batchIds = batchRes.rows.map((batch) => Number(batch.id)).filter(Boolean);
+  const batchIds = batchRes.rows
+    .map((batch) => Number(batch.id))
+    .filter(Boolean);
   if (!batchIds.length) return;
 
   await client.query(
     `DELETE FROM inventory_batch_movements
      WHERE batch_id = ANY($1::bigint[])
        OR (reference_type IN ('stock_in', 'stock_in_to_store') AND reference_id = $2)`,
-    [batchIds, String(stockInId)]
+    [batchIds, String(stockInId)],
   );
-  await client.query(`DELETE FROM inventory_batches WHERE id = ANY($1::bigint[])`, [batchIds]);
+  await client.query(
+    `DELETE FROM inventory_batches WHERE id = ANY($1::bigint[])`,
+    [batchIds],
+  );
 }
 
 export async function GET(request, { params }) {
@@ -131,7 +151,11 @@ export async function GET(request, { params }) {
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
 
-    const permissionCheck = requirePermission(auth.user, 'VIEW_INVENTORY', 'MANAGE_INVENTORY');
+    const permissionCheck = requirePermission(
+      auth.user,
+      "VIEW_INVENTORY",
+      "MANAGE_INVENTORY",
+    );
     if (permissionCheck.error) return permissionCheck.error;
 
     const res = await query(
@@ -142,17 +166,18 @@ export async function GET(request, { params }) {
        FROM stock_in s
        LEFT JOIN stores st ON st.id = s.destination_id
        WHERE s.id = $1`,
-      [id]
+      [id],
     );
     if (res.rows.length === 0) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const row = res.rows[0];
     const storeCheck = requireStore(auth.user, row.destination_id);
     if (storeCheck.error) return storeCheck.error;
 
-    const meta = typeof row.meta === 'object' ? row.meta : {};
-    const destinationMeta = typeof row.destination_meta === 'object' ? row.destination_meta : {};
+    const meta = typeof row.meta === "object" ? row.meta : {};
+    const destinationMeta =
+      typeof row.destination_meta === "object" ? row.destination_meta : {};
     const itemsRes = await query(
       `SELECT sii.id, sii.product_id, COALESCE(sii.product_name, p.name) AS product_name,
               p.sku, p.barcode, p.product_id AS catalog_product_id,
@@ -165,44 +190,58 @@ export async function GET(request, { params }) {
        LEFT JOIN taxes t ON t.id = p.tax_id
        WHERE sii.stock_in_id = $1
        ORDER BY sii.id`,
-      [id]
+      [id],
     );
 
     return NextResponse.json({
       id: row.id,
       method: row.method,
-      transactionId: row.transaction_id || `STK-${String(row.id).padStart(4, '0')}`,
-      referenceType: row.reference_type || 'stock_in',
-      referenceId: row.reference_id || row.transaction_id || `STK-${String(row.id).padStart(4, '0')}`,
+      transactionId:
+        row.transaction_id || `STK-${String(row.id).padStart(4, "0")}`,
+      referenceType: row.reference_type || "stock_in",
+      referenceId:
+        row.reference_id ||
+        row.transaction_id ||
+        `STK-${String(row.id).padStart(4, "0")}`,
       destination: row.destination_id,
       destinationName: row.destination_name,
-      destinationLocationType: destinationMeta.locationType || 'Warehouse',
-      status: row.status || 'draft',
+      destinationLocationType: destinationMeta.locationType || "Warehouse",
+      status: row.status || "draft",
       applyTaxes: row.apply_taxes,
       meta,
-      vendor_name: row.vendor_name || meta.vendor || '',
-      invoice_date: normalizeDate(row.invoice_date) || normalizeDate(meta.invoice_date),
-      invoice_number: row.invoice_number || meta.invoice_number || '',
-      other_charges: row.other_charges ?? meta.other_charges ?? '',
-      remarks: row.remarks || meta.remarks || '',
+      vendor_name: row.vendor_name || meta.vendor || "",
+      invoice_date:
+        normalizeDate(row.invoice_date) || normalizeDate(meta.invoice_date),
+      invoice_number: row.invoice_number || meta.invoice_number || "",
+      other_charges: row.other_charges ?? meta.other_charges ?? "",
+      remarks: row.remarks || meta.remarks || "",
       items: itemsRes.rows.map((item) => ({
         id: item.id,
         product_id: item.product_id,
         name: item.product_name,
-        sku: item.sku || item.barcode || item.catalog_product_id || '',
+        sku: item.sku || item.barcode || item.catalog_product_id || "",
         qty: Number(item.qty || 0),
         cost_price: Number(item.cost_price || 0),
-        tax_value: Number(item.tax_value || (row.apply_taxes ? (Number(item.cost_price || 0) * Number(item.tax_rate || 0)) / 100 : 0)),
+        tax_value: Number(
+          item.tax_value ||
+            (row.apply_taxes
+              ? (Number(item.cost_price || 0) * Number(item.tax_rate || 0)) /
+                100
+              : 0),
+        ),
         mrp: Number(item.mrp || 0),
         selling_price: Number(item.selling_price || 0),
-        batch_no: item.batch_no || '',
+        batch_no: item.batch_no || "",
         mfg_date: normalizeDate(item.mfg_date),
         expiry_date: normalizeDate(item.expiry_date),
       })),
     });
   } catch (err) {
-    console.error('[stockin GET id]', err.message);
-    return NextResponse.json({ error: 'Failed to load stock in' }, { status: 500 });
+    console.error("[stockin GET id]", err.message);
+    return NextResponse.json(
+      { error: "Failed to load stock in" },
+      { status: 500 },
+    );
   }
 }
 
@@ -214,41 +253,62 @@ export async function PUT(request, { params }) {
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
 
-    const permissionCheck = requirePermission(auth.user, 'MANAGE_INVENTORY');
+    const permissionCheck = requirePermission(auth.user, "MANAGE_INVENTORY");
     if (permissionCheck.error) return permissionCheck.error;
 
     const body = await request.json();
     const items = Array.isArray(body.items) ? body.items : [];
+    const missingExpiryItem = items.find((item) => {
+      const qty = Number(item.qty || 0);
+      if (!Number.isFinite(qty) || qty <= 0) return false;
+      return !normalizeDate(item.expiry_date || item.expiryDate);
+    });
+    if (missingExpiryItem) {
+      return NextResponse.json(
+        { error: "Expiry date is mandatory for every stock-in item" },
+        { status: 400 },
+      );
+    }
 
-    await client.query('BEGIN');
+    await client.query("BEGIN");
     const stockInRes = await client.query(
       `SELECT id, status, destination_id FROM stock_in WHERE id = $1 FOR UPDATE`,
-      [id]
+      [id],
     );
     const stockIn = stockInRes.rows[0];
     if (!stockIn) {
-      await client.query('ROLLBACK');
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      await client.query("ROLLBACK");
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
-    const isConfirmed = String(stockIn.status || '').toLowerCase() === 'confirmed';
+    const isConfirmed =
+      String(stockIn.status || "").toLowerCase() === "confirmed";
 
     const storeCheck = requireStore(auth.user, stockIn.destination_id);
     if (storeCheck.error) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       return storeCheck.error;
     }
 
-    const productIds = [...new Set(items.map((item) => Number(item.product_id)).filter(Boolean))];
+    const productIds = [
+      ...new Set(items.map((item) => Number(item.product_id)).filter(Boolean)),
+    ];
     const catalogRes = productIds.length
-      ? await client.query(`SELECT id, name, cost_price, mrp, selling_price FROM products WHERE id = ANY($1::int[])`, [productIds])
+      ? await client.query(
+          `SELECT id, name, cost_price, mrp, selling_price FROM products WHERE id = ANY($1::int[])`,
+          [productIds],
+        )
       : { rows: [] };
-    const catalogMap = new Map(catalogRes.rows.map((row) => [Number(row.id), row]));
+    const catalogMap = new Map(
+      catalogRes.rows.map((row) => [Number(row.id), row]),
+    );
 
     if (isConfirmed) {
       await clearConfirmedStockInBatches(client, id);
     }
 
-    await client.query('DELETE FROM stock_in_items WHERE stock_in_id = $1', [id]);
+    await client.query("DELETE FROM stock_in_items WHERE stock_in_id = $1", [
+      id,
+    ]);
     for (const item of items) {
       const productId = Number(item.product_id);
       const qty = Number(item.qty || 0);
@@ -257,7 +317,9 @@ export async function PUT(request, { params }) {
       if (!catalog) continue;
       const costPrice = Number(item.cost_price || catalog.cost_price || 0);
       const mrp = Number(item.mrp || catalog.mrp || 0);
-      const sellingPrice = Number(item.selling_price || item.sellingPrice || catalog.selling_price || 0);
+      const sellingPrice = Number(
+        item.selling_price || item.sellingPrice || catalog.selling_price || 0,
+      );
 
       const stockInItemRes = await client.query(
         `INSERT INTO stock_in_items (
@@ -277,7 +339,7 @@ export async function PUT(request, { params }) {
           normalizeDate(item.expiry_date) || null,
           mrp,
           sellingPrice,
-        ]
+        ],
       );
       const stockInItemId = stockInItemRes.rows[0]?.id;
       if (isConfirmed) {
@@ -292,7 +354,7 @@ export async function PUT(request, { params }) {
           mfgDate: normalizeDate(item.mfg_date) || null,
           expiryDate: normalizeDate(item.expiry_date) || null,
           meta: {
-            source: 'stock_in_direct_edit',
+            source: "stock_in_direct_edit",
             editedStockInId: Number(id),
             mrp,
             sellingPrice,
@@ -323,17 +385,28 @@ export async function PUT(request, { params }) {
         body.form?.remarks || null,
         JSON.stringify({ bulkTemplateUpload: true, ...(body.form || {}) }),
         items.reduce((sum, item) => sum + Number(item.qty || 0), 0),
-        items.reduce((sum, item) => sum + Number(item.qty || 0) * Number(item.cost_price || 0), Number(body.form?.other_charges || 0)),
-        items.reduce((sum, item) => sum + Number(item.qty || 0) * Number(item.tax_value || 0), 0),
-      ]
+        items.reduce(
+          (sum, item) =>
+            sum + Number(item.qty || 0) * Number(item.cost_price || 0),
+          Number(body.form?.other_charges || 0),
+        ),
+        items.reduce(
+          (sum, item) =>
+            sum + Number(item.qty || 0) * Number(item.tax_value || 0),
+          0,
+        ),
+      ],
     );
 
-    await client.query('COMMIT');
+    await client.query("COMMIT");
     return NextResponse.json({ success: true, id, inserted: items.length });
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    console.error('[stockin PUT id]', err.message);
-    return NextResponse.json({ error: err.message || 'Failed to update stock in' }, { status: 500 });
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[stockin PUT id]", err.message);
+    return NextResponse.json(
+      { error: err.message || "Failed to update stock in" },
+      { status: 500 },
+    );
   } finally {
     client.release();
   }
@@ -347,34 +420,50 @@ export async function DELETE(request, { params }) {
     await ensureInventoryBatchSchema();
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
-    if (auth.user?.role !== 'super_admin') {
-      return NextResponse.json({ error: 'Only super admin can delete stock in records' }, { status: 403 });
+    if (auth.user?.role !== "super_admin") {
+      return NextResponse.json(
+        { error: "Only super admin can delete stock in records" },
+        { status: 403 },
+      );
     }
 
-    await client.query('BEGIN');
+    await client.query("BEGIN");
     const stockInRes = await client.query(
       `SELECT id, status, destination_id FROM stock_in WHERE id = $1 FOR UPDATE`,
-      [id]
+      [id],
     );
     const stockIn = stockInRes.rows[0];
     if (!stockIn) {
-      await client.query('ROLLBACK');
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      await client.query("ROLLBACK");
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    if (String(stockIn.status || '').toLowerCase() === 'confirmed') {
+    if (String(stockIn.status || "").toLowerCase() === "confirmed") {
       await deleteConfirmedStockInBatches(client, id);
     }
 
-    await client.query(`UPDATE vendor_invoices SET stock_in_id = NULL WHERE stock_in_id = $1`, [id]).catch(() => {});
-    await client.query(`UPDATE margin_approval_requests SET stock_in_id = NULL, stock_in_item_id = NULL WHERE stock_in_id = $1`, [id]).catch(() => {});
+    await client
+      .query(
+        `UPDATE vendor_invoices SET stock_in_id = NULL WHERE stock_in_id = $1`,
+        [id],
+      )
+      .catch(() => {});
+    await client
+      .query(
+        `UPDATE margin_approval_requests SET stock_in_id = NULL, stock_in_item_id = NULL WHERE stock_in_id = $1`,
+        [id],
+      )
+      .catch(() => {});
     await client.query(`DELETE FROM stock_in WHERE id = $1`, [id]);
-    await client.query('COMMIT');
+    await client.query("COMMIT");
     return NextResponse.json({ success: true, id });
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    console.error('[stockin DELETE id]', err.message);
-    return NextResponse.json({ error: err.message || 'Failed to delete stock in' }, { status: 500 });
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[stockin DELETE id]", err.message);
+    return NextResponse.json(
+      { error: err.message || "Failed to delete stock in" },
+      { status: 500 },
+    );
   } finally {
     client.release();
   }

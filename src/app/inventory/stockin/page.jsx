@@ -232,6 +232,10 @@ function normalizeImportDate(value) {
   return toDateInputValue(value);
 }
 
+function isMissingImportDate(value) {
+  return String(value ?? "").trim() === "";
+}
+
 function parseBulkNumber(value, fallback = 0) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   const cleaned = String(value ?? "")
@@ -1200,6 +1204,17 @@ export default function StockInPage() {
         const expiryDate = normalizeImportDate(
           getBulkField(row, ["expiry_date"]),
         );
+        const rawExpiryDate = getBulkField(row, ["expiry_date"]);
+        if (isMissingImportDate(rawExpiryDate) || !expiryDate) {
+          return {
+            import_error: true,
+            row_number: rowNumber,
+            productName: productName || matchedProduct.productName || "",
+            sku,
+            barcode,
+            message: "Expiry Date is mandatory for stock-in.",
+          };
+        }
         const batchNo =
           getBulkField(row, [
             "serial_number_serialnumber",
@@ -1542,6 +1557,19 @@ export default function StockInPage() {
           };
         })
         .filter(Boolean);
+      const expiryColumn = XLSX.utils.encode_col(
+        STOCK_IN_TEMPLATE_HEADERS.indexOf("Expiry Date"),
+      );
+      validations.push({
+        type: "custom",
+        range: `${expiryColumn}2:${expiryColumn}${Math.max(2, productRows.length + 1)}`,
+        formula: `LEN(TRIM(${expiryColumn}2))>0`,
+        allowBlank: false,
+        errorTitle: "Expiry Date Required",
+        error: "Expiry Date is mandatory for stock-in.",
+        promptTitle: "Expiry Date Required",
+        prompt: "Enter expiry date in dd/mm/yyyy format.",
+      });
 
       const workbook = XLSX.utils.book_new();
       const {

@@ -895,10 +895,31 @@ export async function GET(req) {
             ib.available_qty,
             ib.expiry_date,
             ib.created_at,
-            COALESCE(NULLIF(${getBatchVariantNumberSql("mrp", "0")}, 0), p.mrp, 0) AS variant_mrp,
-            COALESCE(NULLIF(${getBatchVariantNumberSql("sellingPrice", "0")}, 0), NULLIF(ps.selling_price, 0), p.selling_price, 0) AS variant_selling_price,
-            COALESCE(NULLIF(${getBatchVariantNumberSql("costPrice", "0")}, 0), NULLIF(ib.cost_price, 0), p.cost_price, 0) AS variant_cost_price
+            COALESCE(
+              NULLIF(${getBatchVariantNumberSql("mrp", "0")}, 0),
+              NULLIF(sii_source.mrp, 0),
+              p.mrp,
+              0
+            ) AS variant_mrp,
+            COALESCE(
+              NULLIF(${getBatchVariantNumberSql("sellingPrice", "0")}, 0),
+              NULLIF(sii_source.selling_price, 0),
+              NULLIF(ps.selling_price, 0),
+              p.selling_price,
+              0
+            ) AS variant_selling_price,
+            COALESCE(
+              NULLIF(${getBatchVariantNumberSql("costPrice", "0")}, 0),
+              NULLIF(sii_source.cost_price, 0),
+              NULLIF(ib.cost_price, 0),
+              p.cost_price,
+              0
+            ) AS variant_cost_price
           FROM inventory_batches ib
+          LEFT JOIN stock_in_items sii_source
+            ON ib.source_type = 'stock_in'
+           AND NULLIF(ib.source_id, '') ~ '^[0-9]+$'
+           AND sii_source.id = NULLIF(ib.source_id, '')::BIGINT
           WHERE ib.product_id = p.id
             AND ib.store_id = $1
             AND ib.status = 'active'
