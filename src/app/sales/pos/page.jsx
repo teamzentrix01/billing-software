@@ -75,16 +75,34 @@ function signedByte(value) {
   return value > 127 ? value - 256 : value;
 }
 
+function getBytes(data) {
+  if (!data) return new Uint8Array();
+  if (data instanceof Uint8Array) return data;
+  return new Uint8Array(
+    data.buffer || data,
+    data.byteOffset || 0,
+    data.byteLength,
+  );
+}
+
+function getHexPreview(data) {
+  return Array.from(getBytes(data))
+    .slice(0, 24)
+    .map((byte) => byte.toString(16).padStart(2, "0").toUpperCase())
+    .join(" ");
+}
+
+function getPrintablePreview(data) {
+  return new TextDecoder()
+    .decode(data)
+    .replace(/[^\x20-\x7E\r\n]/g, ".")
+    .trim()
+    .slice(0, 80);
+}
+
 function parseUsbScaleWeight(data) {
   if (!data) return null;
-  const bytes =
-    data instanceof Uint8Array
-      ? data
-      : new Uint8Array(
-          data.buffer || data,
-          data.byteOffset || 0,
-          data.byteLength,
-        );
+  const bytes = getBytes(data);
   if (!bytes.length) return null;
 
   for (const offset of [0, 1]) {
@@ -114,6 +132,12 @@ function parseScaleWeight(rawValue) {
     const grams = Number(digits);
     if (!Number.isFinite(grams)) return null;
     return sign <= 0 || grams <= 0 ? 0 : grams / 1000;
+  }
+
+  if (!/[a-z]/i.test(compact) && /^[+-]?\d{1,3}\.\d{1,4}$/.test(compact)) {
+    const value = Number(compact);
+    if (!Number.isFinite(value) || Math.abs(value) > 100) return null;
+    return value <= 0 ? 0 : value;
   }
 
   const signedMatches = [
@@ -511,6 +535,7 @@ export default function POSPage() {
   const [scaleConnected, setScaleConnected] = useState(false);
   const [scaleWeightKg, setScaleWeightKg] = useState(0);
   const [scaleStatus, setScaleStatus] = useState("");
+  const [scaleLastData, setScaleLastData] = useState("");
   const [activeScaleCartKey, setActiveScaleCartKey] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [openSessionModal, setOpenSessionModal] = useState(false);
@@ -542,42 +567,57 @@ export default function POSPage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const applyScaleWeightReading = useCallback((raw) => {
-    const weightKg = parseScaleWeight(raw);
-    if (weightKg === null) return false;
-
-    const normalizedWeight = Number(weightKg.toFixed(3));
-    setScaleWeightKg(normalizedWeight);
-    setScaleStatus(formatScaleWeight(normalizedWeight));
-    const activeCartKey = activeScaleCartKeyRef.current;
-    if (activeCartKey) {
-      setCart((current) =>
-        current.map((item) => {
-          if (getCartItemKey(item) !== activeCartKey) return item;
-          const weightedUnit = getWeightedUnitKind(item.unit);
-          if (!weightedUnit) return item;
-          const nextQty = Math.min(
-            getScaleQuantityForUnit(normalizedWeight, weightedUnit),
-            toNumber(item.availableStock),
-          );
-          return Number(item.qty) === nextQty
-            ? item
-            : { ...item, qty: nextQty };
-        }),
-      );
-    }
-    return true;
+  const noteScaleRawData = useCallback((raw, bytes = null) => {
+    const text = String(raw || "").trim();
+    const hex = bytes ? getHexPreview(bytes) : "";
+    const preview = text || (hex ? `HEX ${hex}` : "");
+    if (preview) setScaleLastData(preview.slice(0, 80));
   }, []);
+
+  const applyScaleWeightReading = useCallback(
+    (raw) => {
+      noteScaleRawData(raw);
+      const weightKg = parseScaleWeight(raw);
+      if (weightKg === null) return false;
+
+      const normalizedWeight = Number(weightKg.toFixed(3));
+      setScaleWeightKg(normalizedWeight);
+      setScaleStatus(formatScaleWeight(normalizedWeight));
+      const activeCartKey = activeScaleCartKeyRef.current;
+      if (activeCartKey) {
+        setCart((current) =>
+          current.map((item) => {
+            if (getCartItemKey(item) !== activeCartKey) return item;
+            const weightedUnit = getWeightedUnitKind(item.unit);
+            if (!weightedUnit) return item;
+            const nextQty = Math.min(
+              getScaleQuantityForUnit(normalizedWeight, weightedUnit),
+              toNumber(item.availableStock),
+            );
+            return Number(item.qty) === nextQty
+              ? item
+              : { ...item, qty: nextQty };
+          }),
+        );
+      }
+      return true;
+    },
+    [noteScaleRawData],
+  );
 
   const applyUsbScaleData = useCallback(
     (data) => {
+      const printable = getPrintablePreview(data);
+      noteScaleRawData(printable, data);
       const binaryWeightKg = parseUsbScaleWeight(data);
       if (binaryWeightKg !== null) {
         return applyScaleWeightReading(`${binaryWeightKg.toFixed(3)}kg`);
       }
-      return applyScaleWeightReading(new TextDecoder().decode(data));
+      return applyScaleWeightReading(
+        printable || new TextDecoder().decode(data),
+      );
     },
-    [applyScaleWeightReading],
+    [applyScaleWeightReading, noteScaleRawData],
   );
 
   const configureUsbSerialAdapter = useCallback(
@@ -664,6 +704,7 @@ export default function POSPage() {
     setScaleConnected(false);
     setScaleWeightKg(0);
     setScaleStatus("");
+    setScaleLastData("");
     activeScaleCartKeyRef.current = "";
     setActiveScaleCartKey("");
   }, []);
@@ -678,6 +719,7 @@ export default function POSPage() {
     }
 
     let device;
+    let pollTimer = null;
     try {
       device = await navigator.usb.requestDevice({ filters: [] });
       await device.open();
@@ -686,6 +728,7 @@ export default function POSPage() {
       let selectedInterface = null;
       let selectedAlternate = null;
       let inputEndpoint = null;
+      let outputEndpoint = null;
       for (const usbInterface of device.configuration.interfaces || []) {
         for (const alternate of usbInterface.alternates || []) {
           const endpoint = (alternate.endpoints || []).find(
@@ -697,6 +740,12 @@ export default function POSPage() {
             selectedInterface = usbInterface;
             selectedAlternate = alternate;
             inputEndpoint = endpoint;
+            outputEndpoint =
+              (alternate.endpoints || []).find(
+                (candidate) =>
+                  candidate.direction === "out" &&
+                  ["bulk", "interrupt"].includes(candidate.type),
+              ) || null;
             break;
           }
         }
@@ -723,10 +772,25 @@ export default function POSPage() {
       scaleUsbLoopRef.current = true;
       setScaleConnected(true);
       setScaleStatus("Connected · waiting");
+      setScaleLastData("");
       showToast("Weighing scale connected through USB", "success");
 
       const decoder = new TextDecoder();
+      const encoder = new TextEncoder();
       let buffer = "";
+      let commandIndex = 0;
+      const usbCommands = ["\r\n", "P\r\n", "W\r\n", "S\r\n", "SI\r\n"];
+      pollTimer = outputEndpoint
+        ? window.setInterval(() => {
+            device
+              .transferOut(
+                outputEndpoint.endpointNumber,
+                encoder.encode(usbCommands[commandIndex % usbCommands.length]),
+              )
+              .catch(() => {});
+            commandIndex += 1;
+          }, 1000)
+        : null;
       while (scaleUsbLoopRef.current) {
         const result = await device.transferIn(
           inputEndpoint.endpointNumber,
@@ -745,10 +809,13 @@ export default function POSPage() {
           buffer = "";
         }
       }
+      if (pollTimer) window.clearInterval(pollTimer);
     } catch (err) {
+      if (pollTimer) window.clearInterval(pollTimer);
       scaleUsbLoopRef.current = false;
       setScaleConnected(false);
       setScaleStatus("");
+      setScaleLastData("");
       if (err?.name !== "NotFoundError") {
         showToast(
           err?.message ||
@@ -774,6 +841,7 @@ export default function POSPage() {
       scalePortRef.current = port;
       setScaleConnected(true);
       setScaleStatus("Connected · waiting");
+      setScaleLastData("");
       showToast("Weighing scale connected", "success");
 
       const decoder = new TextDecoder();
@@ -806,6 +874,7 @@ export default function POSPage() {
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
+          noteScaleRawData(getPrintablePreview(value), value);
           buffer += decoder.decode(value || new Uint8Array(), {
             stream: true,
           });
@@ -827,11 +896,12 @@ export default function POSPage() {
     } catch (err) {
       setScaleConnected(false);
       setScaleStatus("");
+      setScaleLastData("");
       if (err?.name !== "NotFoundError") {
         showToast(err?.message || "Unable to connect weighing scale", "error");
       }
     }
-  }, [applyScaleWeightReading, connectScaleWithWebUsb]);
+  }, [applyScaleWeightReading, connectScaleWithWebUsb, noteScaleRawData]);
 
   useEffect(
     () => () => {
@@ -2415,7 +2485,11 @@ export default function POSPage() {
                       ? "border-emerald-300/50 bg-emerald-500/20 text-emerald-200 hover:bg-emerald-500/30"
                       : "border-white/20 text-indigo-200 hover:bg-white/10"
                   }`}
-                  title="Connect USB weighing scale"
+                  title={
+                    scaleLastData
+                      ? `Last scale data: ${scaleLastData}`
+                      : "Connect USB weighing scale"
+                  }
                 >
                   {scaleConnected
                     ? `Scale ${scaleStatus || formatScaleWeight(scaleWeightKg)}`
@@ -2445,6 +2519,20 @@ export default function POSPage() {
             )}
           </div>
         </div>
+
+        {scaleConnected && scaleStatus === "Connected · waiting" ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800 shadow-sm">
+            Scale connected, but no readable weight data received yet. Press the
+            scale PRINT key once, or set the scale data transmission mode to
+            continuous / print output at 9600 baud, 8 data bits, no parity, 1
+            stop bit.{" "}
+            {scaleLastData ? (
+              <span className="font-black">Last data: {scaleLastData}</span>
+            ) : (
+              <span className="font-black">No raw data received.</span>
+            )}
+          </div>
+        ) : null}
 
         {/* ── MAIN GRID ── */}
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_330px] 2xl:grid-cols-[minmax(0,1fr)_370px]">
