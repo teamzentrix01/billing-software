@@ -1086,7 +1086,7 @@ export default function POSPage() {
           getScaleQuantityForUnit(scaleWeightKg, weightedUnit),
           toNumber(item.availableStock),
         );
-        if (nextQty <= 0 || Number(item.qty) === nextQty) return item;
+        if (Number(item.qty) === nextQty) return item;
         return { ...item, qty: nextQty };
       }),
     );
