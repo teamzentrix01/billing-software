@@ -47,6 +47,14 @@ function isWeightedUnit(unit) {
   return Boolean(getWeightedUnitKind(unit));
 }
 
+function getScaleQuantityForUnit(weightKg, weightedUnit) {
+  const normalizedWeight = Number(Number(weightKg || 0).toFixed(3));
+  if (normalizedWeight <= 0) return 0;
+  return weightedUnit === "GRAMS"
+    ? Number((normalizedWeight * 1000).toFixed(3))
+    : normalizedWeight;
+}
+
 const EAGLE_SCALE_SERIAL_OPTIONS = {
   baudRate: 9600,
   dataBits: 8,
@@ -441,6 +449,7 @@ export default function POSPage() {
   const [scaleConnected, setScaleConnected] = useState(false);
   const [scaleWeightKg, setScaleWeightKg] = useState(0);
   const [scaleStatus, setScaleStatus] = useState("");
+  const [activeScaleCartKey, setActiveScaleCartKey] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [openSessionModal, setOpenSessionModal] = useState(false);
   const [closeSessionModal, setCloseSessionModal] = useState(false);
@@ -486,6 +495,7 @@ export default function POSPage() {
     setScaleConnected(false);
     setScaleWeightKg(0);
     setScaleStatus("");
+    setActiveScaleCartKey("");
   }, []);
 
   const connectScale = useCallback(async () => {
@@ -1020,12 +1030,9 @@ export default function POSPage() {
       );
       return;
     }
-    const nextQty =
-      weighted && weightedUnit === "GRAMS"
-        ? Number((scaleQty * 1000).toFixed(3))
-        : weighted
-          ? scaleQty
-          : 1;
+    const nextQty = weighted
+      ? getScaleQuantityForUnit(scaleQty, weightedUnit)
+      : 1;
     if (nextQty > toNumber(product.availableStock)) {
       showToast(
         `Only ${product.availableStock} ${product.unit || "qty"} available`,
@@ -1040,6 +1047,7 @@ export default function POSPage() {
         ? Math.max(0, mrp - sellingPrice)
         : 0;
     const cartKey = getCartItemKey(product);
+    if (weighted) setActiveScaleCartKey(cartKey);
     setCart((current) => {
       const existing = current.find((item) => getCartItemKey(item) === cartKey);
       if (existing)
@@ -1065,6 +1073,23 @@ export default function POSPage() {
     });
   };
 
+  useEffect(() => {
+    if (!scaleConnected || !activeScaleCartKey || scaleWeightKg <= 0) return;
+    setCart((current) =>
+      current.map((item) => {
+        if (getCartItemKey(item) !== activeScaleCartKey) return item;
+        const weightedUnit = getWeightedUnitKind(item.unit);
+        if (!weightedUnit) return item;
+        const nextQty = Math.min(
+          getScaleQuantityForUnit(scaleWeightKg, weightedUnit),
+          toNumber(item.availableStock),
+        );
+        if (nextQty <= 0 || Number(item.qty) === nextQty) return item;
+        return { ...item, qty: nextQty };
+      }),
+    );
+  }, [activeScaleCartKey, scaleConnected, scaleWeightKg]);
+
   const updateCartItem = (key, field, value) =>
     setCart((current) =>
       current.map((item) =>
@@ -1074,13 +1099,16 @@ export default function POSPage() {
       ),
     );
 
-  const removeCartItem = (key) =>
+  const removeCartItem = (key) => {
+    if (activeScaleCartKey === String(key)) setActiveScaleCartKey("");
     setCart((current) =>
       current.filter((item) => getCartItemKey(item) !== String(key)),
     );
+  };
 
   const clearCart = () => {
     setCart([]);
+    setActiveScaleCartKey("");
     setCustomerName("");
     setCustomerMobile("");
     setOrderDiscount("0");
@@ -2312,17 +2340,30 @@ export default function POSPage() {
                       const itemKey = getCartItemKey(item);
                       const weightedUnit = getWeightedUnitKind(item.unit);
                       const weighted = Boolean(weightedUnit);
+                      const isScaleLinked = activeScaleCartKey === itemKey;
                       const qtyStep = weightedUnit === "KG" ? 0.001 : 1;
                       const minQty = weightedUnit === "KG" ? 0.001 : 1;
                       return (
                         <div
                           key={itemKey}
-                          className="border-b border-slate-50 px-2.5 py-2 transition-colors last:border-0 hover:bg-slate-50/50"
+                          onClick={() =>
+                            weighted && setActiveScaleCartKey(itemKey)
+                          }
+                          className={`border-b border-slate-50 px-2.5 py-2 transition-colors last:border-0 hover:bg-slate-50/50 ${
+                            isScaleLinked ? "bg-emerald-50/60" : ""
+                          } ${weighted ? "cursor-pointer" : ""}`}
                         >
                           <div className="flex items-start justify-between gap-2 mb-2">
-                            <p className="font-bold text-slate-800 text-xs leading-snug flex-1 line-clamp-2">
-                              {item.name}
-                            </p>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-bold text-slate-800 text-xs leading-snug line-clamp-2">
+                                {item.name}
+                              </p>
+                              {isScaleLinked && (
+                                <p className="mt-0.5 text-[9px] font-black uppercase tracking-wider text-emerald-600">
+                                  Live scale sync
+                                </p>
+                              )}
+                            </div>
                             <button
                               onClick={() => removeCartItem(itemKey)}
                               className="w-5 h-5 rounded-md bg-rose-50 text-rose-400 hover:bg-rose-500 hover:text-white text-[10px] font-black flex items-center justify-center transition-all shrink-0 mt-0.5"
