@@ -67,14 +67,15 @@ function parseScaleWeight(rawValue) {
   const text = String(rawValue || "")
     .replace(/,/g, ".")
     .trim();
-  if (!text) return 0;
+  if (!text) return null;
   const matches = [
     ...text.matchAll(/([+-]?\d+(?:\.\d+)?)\s*(kg|kgs|g|gm|gram|grams)?/gi),
   ];
   const match = matches[matches.length - 1];
-  if (!match) return 0;
+  if (!match) return null;
   const value = Number(match[1]);
-  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (!Number.isFinite(value)) return null;
+  if (value <= 0) return 0;
   const unit = String(match[2] || "kg").toLowerCase();
   return ["g", "gm", "gram", "grams"].includes(unit) ? value / 1000 : value;
 }
@@ -521,9 +522,10 @@ export default function POSPage() {
       let buffer = "";
       const applyWeight = (raw) => {
         const weightKg = parseScaleWeight(raw);
-        if (weightKg > 0) {
-          setScaleWeightKg(Number(weightKg.toFixed(3)));
-          setScaleStatus(`${weightKg.toFixed(3)} KG`);
+        if (weightKg !== null) {
+          const normalizedWeight = Number(weightKg.toFixed(3));
+          setScaleWeightKg(normalizedWeight);
+          setScaleStatus(`${normalizedWeight.toFixed(3)} KG`);
           return true;
         }
         return false;
@@ -1074,7 +1076,7 @@ export default function POSPage() {
   };
 
   useEffect(() => {
-    if (!scaleConnected || !activeScaleCartKey || scaleWeightKg <= 0) return;
+    if (!scaleConnected || !activeScaleCartKey) return;
     setCart((current) =>
       current.map((item) => {
         if (getCartItemKey(item) !== activeScaleCartKey) return item;
@@ -2342,7 +2344,7 @@ export default function POSPage() {
                       const weighted = Boolean(weightedUnit);
                       const isScaleLinked = activeScaleCartKey === itemKey;
                       const qtyStep = weightedUnit === "KG" ? 0.001 : 1;
-                      const minQty = weightedUnit === "KG" ? 0.001 : 1;
+                      const minQty = weighted ? 0 : 1;
                       return (
                         <div
                           key={itemKey}
