@@ -55,6 +55,14 @@ function getScaleQuantityForUnit(weightKg, weightedUnit) {
     : normalizedWeight;
 }
 
+function formatScaleWeight(weightKg) {
+  const normalizedWeight = Number(Number(weightKg || 0).toFixed(3));
+  if (normalizedWeight < 1) {
+    return `${Math.round(normalizedWeight * 1000)} g`;
+  }
+  return `${normalizedWeight.toFixed(3)} KG`;
+}
+
 const EAGLE_SCALE_SERIAL_OPTIONS = {
   baudRate: 9600,
   dataBits: 8,
@@ -68,12 +76,22 @@ function parseScaleWeight(rawValue) {
     .replace(/,/g, ".")
     .trim();
   if (!text) return null;
-  const matches = [
-    ...text.matchAll(/([+-]?\d+(?:\.\d+)?)\s*(kg|kgs|g|gm|gram|grams)?/gi),
+  const signedMatches = [
+    ...text.matchAll(
+      /([+-]\s*\d{1,6}(?:\.\d{1,3})?)\s*(kg|kgs|g|gm|gram|grams)?/gi,
+    ),
   ];
+  const unitMatches = [
+    ...text.matchAll(
+      /(?:^|[^\d.])(\d{1,6}(?:\.\d{1,3})?)\s*(kg|kgs|g|gm|gram|grams)\b/gi,
+    ),
+  ];
+  const matches = [...signedMatches, ...unitMatches].sort(
+    (a, b) => a.index - b.index,
+  );
   const match = matches[matches.length - 1];
   if (!match) return null;
-  const value = Number(match[1]);
+  const value = Number(String(match[1]).replace(/\s+/g, ""));
   if (!Number.isFinite(value)) return null;
   if (value <= 0) return 0;
   const unit = String(match[2] || "kg").toLowerCase();
@@ -490,7 +508,7 @@ export default function POSPage() {
 
     const normalizedWeight = Number(weightKg.toFixed(3));
     setScaleWeightKg(normalizedWeight);
-    setScaleStatus(`${normalizedWeight.toFixed(3)} KG`);
+    setScaleStatus(formatScaleWeight(normalizedWeight));
     const activeCartKey = activeScaleCartKeyRef.current;
     if (activeCartKey) {
       setCart((current) =>
@@ -2251,7 +2269,7 @@ export default function POSPage() {
                   title="Connect USB weighing scale"
                 >
                   {scaleConnected
-                    ? `Scale ${scaleStatus || `${scaleWeightKg.toFixed(3)} KG`}`
+                    ? `Scale ${scaleStatus || formatScaleWeight(scaleWeightKg)}`
                     : "Connect Scale"}
                 </button>
                 <button
