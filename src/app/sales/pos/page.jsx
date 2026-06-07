@@ -76,6 +76,16 @@ function parseScaleWeight(rawValue) {
     .replace(/,/g, ".")
     .trim();
   if (!text) return null;
+
+  const compact = text.replace(/\s+/g, "");
+  if (/^[+-]?\d{2,8}$/.test(compact)) {
+    const sign = compact.startsWith("-") ? -1 : 1;
+    const digits = compact.replace(/^[+-]/, "");
+    const grams = Number(digits);
+    if (!Number.isFinite(grams)) return null;
+    return sign <= 0 || grams <= 0 ? 0 : grams / 1000;
+  }
+
   const signedMatches = [
     ...text.matchAll(
       /([+-]\s*\d{1,6}(?:\.\d{1,3})?)\s*(kg|kgs|g|gm|gram|grams)?/gi,
@@ -653,29 +663,56 @@ export default function POSPage() {
       await port.open(EAGLE_SCALE_SERIAL_OPTIONS);
       scalePortRef.current = port;
       setScaleConnected(true);
-      setScaleStatus("Scale connected · 9600 8N1");
+      setScaleStatus("Connected · waiting");
       showToast("Weighing scale connected", "success");
 
       const decoder = new TextDecoder();
       const reader = port.readable.getReader();
       scaleReaderRef.current = reader;
+      let writer = null;
+      let pollTimer = null;
+      try {
+        writer = port.writable?.getWriter?.() || null;
+        if (writer) {
+          const encoder = new TextEncoder();
+          const commands = ["\r\n", "P\r\n", "W\r\n"];
+          let commandIndex = 0;
+          pollTimer = window.setInterval(() => {
+            writer
+              ?.write(encoder.encode(commands[commandIndex % commands.length]))
+              .catch(() => {});
+            commandIndex += 1;
+          }, 1200);
+        }
+      } catch {
+        writer = null;
+      }
       let buffer = "";
       const applyWeight = (raw) => {
         return applyScaleWeightReading(raw);
       };
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value || new Uint8Array(), { stream: true });
-        const chunks = buffer.split(/\r?\n/);
-        buffer = chunks.pop() || "";
-        for (const chunk of chunks) {
-          applyWeight(chunk);
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value || new Uint8Array(), {
+            stream: true,
+          });
+          const chunks = buffer.split(/\r?\n/);
+          buffer = chunks.pop() || "";
+          for (const chunk of chunks) {
+            applyWeight(chunk);
+          }
+          if (buffer.length >= 5 && applyWeight(buffer)) {
+            buffer = "";
+          }
         }
-        if (buffer.length >= 8 && applyWeight(buffer)) {
-          buffer = "";
-        }
+      } finally {
+        if (pollTimer) window.clearInterval(pollTimer);
+        try {
+          writer?.releaseLock?.();
+        } catch {}
       }
     } catch (err) {
       setScaleConnected(false);
