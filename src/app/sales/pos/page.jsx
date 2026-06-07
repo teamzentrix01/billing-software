@@ -423,6 +423,7 @@ export default function POSPage() {
   const searchInputRef = useRef(null);
   const scalePortRef = useRef(null);
   const scaleReaderRef = useRef(null);
+  const activeScaleCartKeyRef = useRef("");
 
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
@@ -496,6 +497,7 @@ export default function POSPage() {
     setScaleConnected(false);
     setScaleWeightKg(0);
     setScaleStatus("");
+    activeScaleCartKeyRef.current = "";
     setActiveScaleCartKey("");
   }, []);
 
@@ -526,6 +528,23 @@ export default function POSPage() {
           const normalizedWeight = Number(weightKg.toFixed(3));
           setScaleWeightKg(normalizedWeight);
           setScaleStatus(`${normalizedWeight.toFixed(3)} KG`);
+          const activeCartKey = activeScaleCartKeyRef.current;
+          if (activeCartKey) {
+            setCart((current) =>
+              current.map((item) => {
+                if (getCartItemKey(item) !== activeCartKey) return item;
+                const weightedUnit = getWeightedUnitKind(item.unit);
+                if (!weightedUnit) return item;
+                const nextQty = Math.min(
+                  getScaleQuantityForUnit(normalizedWeight, weightedUnit),
+                  toNumber(item.availableStock),
+                );
+                return Number(item.qty) === nextQty
+                  ? item
+                  : { ...item, qty: nextQty };
+              }),
+            );
+          }
           return true;
         }
         return false;
@@ -1049,7 +1068,10 @@ export default function POSPage() {
         ? Math.max(0, mrp - sellingPrice)
         : 0;
     const cartKey = getCartItemKey(product);
-    if (weighted) setActiveScaleCartKey(cartKey);
+    if (weighted) {
+      activeScaleCartKeyRef.current = cartKey;
+      setActiveScaleCartKey(cartKey);
+    }
     setCart((current) => {
       const existing = current.find((item) => getCartItemKey(item) === cartKey);
       if (existing)
@@ -1074,6 +1096,10 @@ export default function POSPage() {
       ];
     });
   };
+
+  useEffect(() => {
+    activeScaleCartKeyRef.current = activeScaleCartKey;
+  }, [activeScaleCartKey]);
 
   useEffect(() => {
     if (!scaleConnected || !activeScaleCartKey) return;
@@ -1102,7 +1128,10 @@ export default function POSPage() {
     );
 
   const removeCartItem = (key) => {
-    if (activeScaleCartKey === String(key)) setActiveScaleCartKey("");
+    if (activeScaleCartKey === String(key)) {
+      activeScaleCartKeyRef.current = "";
+      setActiveScaleCartKey("");
+    }
     setCart((current) =>
       current.filter((item) => getCartItemKey(item) !== String(key)),
     );
@@ -1110,6 +1139,7 @@ export default function POSPage() {
 
   const clearCart = () => {
     setCart([]);
+    activeScaleCartKeyRef.current = "";
     setActiveScaleCartKey("");
     setCustomerName("");
     setCustomerMobile("");
@@ -2348,9 +2378,11 @@ export default function POSPage() {
                       return (
                         <div
                           key={itemKey}
-                          onClick={() =>
-                            weighted && setActiveScaleCartKey(itemKey)
-                          }
+                          onClick={() => {
+                            if (!weighted) return;
+                            activeScaleCartKeyRef.current = itemKey;
+                            setActiveScaleCartKey(itemKey);
+                          }}
                           className={`border-b border-slate-50 px-2.5 py-2 transition-colors last:border-0 hover:bg-slate-50/50 ${
                             isScaleLinked ? "bg-emerald-50/60" : ""
                           } ${weighted ? "cursor-pointer" : ""}`}
