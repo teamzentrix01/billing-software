@@ -174,12 +174,30 @@ function writeZipEntries(entries) {
 function patchWorksheetValidations(xml, validations) {
   const dataValidations = [
     `<dataValidations count="${validations.length}">`,
-    ...validations.map(
-      (validation) =>
-        `<dataValidation type="list" allowBlank="1" showErrorMessage="${validation.showErrorMessage === false ? "0" : "1"}" showInputMessage="1" sqref="${escapeXml(validation.range)}">` +
+    ...validations.map((validation) => {
+      const type = validation.type || "list";
+      const allowBlank = validation.allowBlank === false ? "0" : "1";
+      const operator = validation.operator
+        ? ` operator="${escapeXml(validation.operator)}"`
+        : "";
+      const errorTitle = validation.errorTitle
+        ? ` errorTitle="${escapeXml(validation.errorTitle)}"`
+        : "";
+      const error = validation.error
+        ? ` error="${escapeXml(validation.error)}"`
+        : "";
+      const promptTitle = validation.promptTitle
+        ? ` promptTitle="${escapeXml(validation.promptTitle)}"`
+        : "";
+      const prompt = validation.prompt
+        ? ` prompt="${escapeXml(validation.prompt)}"`
+        : "";
+      return (
+        `<dataValidation type="${escapeXml(type)}" allowBlank="${allowBlank}" showErrorMessage="${validation.showErrorMessage === false ? "0" : "1"}" showInputMessage="1"${operator}${errorTitle}${error}${promptTitle}${prompt} sqref="${escapeXml(validation.range)}">` +
         `<formula1>${escapeXml(validation.formula)}</formula1>` +
-        "</dataValidation>",
-    ),
+        "</dataValidation>"
+      );
+    }),
     "</dataValidations>",
   ].join("");
   const withoutExisting = xml.replace(

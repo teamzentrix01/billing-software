@@ -90,9 +90,9 @@ async function allocateWarehouseBatchStock(
        AND LOWER(COALESCE(s.meta->>'locationType', 'Warehouse')) = 'warehouse'
        AND ib.status = 'active'
        AND ib.available_qty > 0
-       AND (ib.expiry_date IS NULL OR ib.expiry_date >= CURRENT_DATE)
-     ORDER BY CASE WHEN ib.expiry_date IS NULL THEN 1 ELSE 0 END ASC,
-              ib.expiry_date ASC,
+       AND ib.expiry_date IS NOT NULL
+       AND ib.expiry_date >= CURRENT_DATE
+     ORDER BY ib.expiry_date ASC,
               ib.created_at ASC,
               ib.id ASC
      FOR UPDATE OF ib`,
@@ -291,7 +291,7 @@ export async function POST(request, { params }) {
       }
     }
 
-    if (isWarehouseDestination) {
+    if (!(isStoreDestination && !isVendorToStoreReceipt)) {
       for (const item of items) {
         const batchRows = normalizeBatchRows(item);
         const itemQty = toQty(item.qty || 0);
@@ -316,11 +316,11 @@ export async function POST(request, { params }) {
 
         const invalidExpiry = batchRows.find((batch) => {
           const normalized = normalizeDate(batch.expiryDate);
-          return batch.expiryDate && !normalized;
+          return !batch.expiryDate || !normalized;
         });
         if (invalidExpiry) {
           return NextResponse.json(
-            { error: `Invalid expiry date for ${item.name || "product"}` },
+            { error: `Expiry date is mandatory for ${item.name || "product"}` },
             { status: 400 },
           );
         }
@@ -344,7 +344,8 @@ export async function POST(request, { params }) {
            AND LOWER(COALESCE(s.meta->>'locationType', 'Warehouse')) = 'warehouse'
            AND ib.status = 'active'
            AND ib.available_qty > 0
-           AND (ib.expiry_date IS NULL OR ib.expiry_date >= CURRENT_DATE)
+           AND ib.expiry_date IS NOT NULL
+           AND ib.expiry_date >= CURRENT_DATE
          GROUP BY ib.product_id`,
         [requestedProductIds],
       );
