@@ -63,6 +63,11 @@ function formatScaleWeight(weightKg) {
   return `${normalizedWeight.toFixed(3)} KG`;
 }
 
+function isAndroidRuntime() {
+  if (typeof navigator === "undefined") return false;
+  return /Android/i.test(navigator.userAgent || "");
+}
+
 const EAGLE_SCALE_SERIAL_OPTIONS = {
   baudRate: 9600,
   dataBits: 8,
@@ -92,6 +97,13 @@ function getHexPreview(data) {
     .join(" ");
 }
 
+function isUsefulScaleText(value) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  const replacementCount = (text.match(/\uFFFD/g) || []).length;
+  return replacementCount === 0 || replacementCount < text.length / 4;
+}
+
 function getPrintablePreview(data) {
   return new TextDecoder()
     .decode(data)
@@ -100,12 +112,60 @@ function getPrintablePreview(data) {
     .slice(0, 80);
 }
 
+function getAsciiFromBytes(data, allowedOnly = false) {
+  const bytes = getBytes(data);
+  return Array.from(bytes)
+    .map((byte) => {
+      if (byte >= 0x20 && byte <= 0x7e) {
+        const char = String.fromCharCode(byte);
+        return !allowedOnly || /[\d+\-.a-zA-Z\s]/.test(char) ? char : " ";
+      }
+      return " ";
+    })
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseScaleWeightFromBytes(data) {
+  const bytes = getBytes(data);
+  if (!bytes.length) return null;
+
+  const candidates = [
+    getAsciiFromBytes(bytes),
+    getAsciiFromBytes(bytes, true),
+    new TextDecoder().decode(bytes),
+  ];
+
+  try {
+    candidates.push(new TextDecoder("utf-16le").decode(bytes));
+  } catch {}
+
+  for (const candidate of candidates) {
+    const parsed = parseScaleWeight(candidate);
+    if (parsed !== null && parsed >= 0 && parsed <= 30) return parsed;
+  }
+
+  const digits = Array.from(bytes)
+    .filter((byte) => byte >= 0x30 && byte <= 0x39)
+    .map((byte) => String.fromCharCode(byte))
+    .join("");
+  if (digits.length >= 3 && digits.length <= 8) {
+    const grams = Number(digits);
+    if (Number.isFinite(grams) && grams >= 0 && grams <= 30000) {
+      return grams / 1000;
+    }
+  }
+
+  return null;
+}
+
 function parseUsbScaleWeight(data) {
   if (!data) return null;
   const bytes = getBytes(data);
   if (!bytes.length) return null;
 
-  for (const offset of [0, 1]) {
+  for (const offset of [0, 1, 2]) {
     if (bytes.length < offset + 6) continue;
     const unit = bytes[offset + 2];
     const exponent = signedByte(bytes[offset + 3]);
@@ -116,7 +176,7 @@ function parseUsbScaleWeight(data) {
     if (unit === 2) return scaledWeight / 1000; // grams
     if (unit === 3) return scaledWeight; // kilograms
   }
-  return null;
+  return parseScaleWeightFromBytes(bytes);
 }
 
 function parseScaleWeight(rawValue) {
@@ -160,6 +220,29 @@ function parseScaleWeight(rawValue) {
   if (value <= 0) return 0;
   const unit = String(match[2] || "kg").toLowerCase();
   return ["g", "gm", "gram", "grams"].includes(unit) ? value / 1000 : value;
+}
+
+function parseBridgeScalePayload(payload) {
+  if (payload == null) return null;
+  if (typeof payload === "number") return payload;
+  if (typeof payload === "string") return parseScaleWeight(payload);
+
+  const value =
+    payload.weightKg ??
+    payload.weight_kg ??
+    payload.kg ??
+    payload.weight ??
+    payload.value ??
+    payload.data?.weightKg ??
+    payload.data?.weight ??
+    null;
+  if (value == null) return null;
+
+  const unit = String(payload.unit || payload.data?.unit || "kg").toLowerCase();
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return parseScaleWeight(String(value));
+  if (["g", "gm", "gram", "grams"].includes(unit)) return numeric / 1000;
+  return numeric;
 }
 
 function formatCurrency(value) {
@@ -507,6 +590,7 @@ export default function POSPage() {
   const scaleReaderRef = useRef(null);
   const scaleUsbDeviceRef = useRef(null);
   const scaleUsbLoopRef = useRef(false);
+  const scaleBridgeTimerRef = useRef(null);
   const activeScaleCartKeyRef = useRef("");
 
   const [user, setUser] = useState(null);
@@ -568,15 +652,18 @@ export default function POSPage() {
   };
 
   const noteScaleRawData = useCallback((raw, bytes = null) => {
-    const text = String(raw || "").trim();
+    const text = isUsefulScaleText(raw) ? String(raw || "").trim() : "";
     const hex = bytes ? getHexPreview(bytes) : "";
-    const preview = text || (hex ? `HEX ${hex}` : "");
+    const preview =
+      text && hex
+        ? `TEXT ${text} | HEX ${hex}`
+        : text || (hex ? `HEX ${hex}` : "");
     if (preview) setScaleLastData(preview.slice(0, 80));
   }, []);
 
   const applyScaleWeightReading = useCallback(
     (raw) => {
-      noteScaleRawData(raw);
+      if (isUsefulScaleText(raw)) noteScaleRawData(raw);
       const weightKg = parseScaleWeight(raw);
       if (weightKg === null) return false;
 
@@ -619,6 +706,59 @@ export default function POSPage() {
     },
     [applyScaleWeightReading, noteScaleRawData],
   );
+
+  const readScaleBridge = useCallback(async () => {
+    const endpoints = [
+      "http://127.0.0.1:8765/weight",
+      "http://127.0.0.1:8765/api/weight",
+      "http://localhost:8765/weight",
+      "http://localhost:8765/api/weight",
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const response = await fetch(`${endpoint}?t=${Date.now()}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) continue;
+        const contentType = response.headers.get("content-type") || "";
+        const payload = contentType.includes("application/json")
+          ? await response.json()
+          : await response.text();
+        const weightKg = parseBridgeScalePayload(payload);
+        if (weightKg === null || weightKg < 0 || weightKg > 30) continue;
+        return { endpoint, weightKg, payload };
+      } catch {}
+    }
+
+    return null;
+  }, []);
+
+  const connectScaleWithBridge = useCallback(async () => {
+    const firstReading = await readScaleBridge();
+    if (!firstReading) return false;
+
+    setScaleConnected(true);
+    setScaleStatus("Bridge connected");
+    setScaleLastData(`Bridge ${firstReading.endpoint}`);
+    applyScaleWeightReading(`${firstReading.weightKg.toFixed(3)}kg`);
+    showToast("Weighing scale connected through POS bridge", "success");
+
+    if (scaleBridgeTimerRef.current) {
+      window.clearInterval(scaleBridgeTimerRef.current);
+    }
+    scaleBridgeTimerRef.current = window.setInterval(async () => {
+      const reading = await readScaleBridge();
+      if (!reading) {
+        setScaleStatus("Bridge connected · waiting");
+        return;
+      }
+      setScaleLastData(`Bridge ${reading.endpoint}`);
+      applyScaleWeightReading(`${reading.weightKg.toFixed(3)}kg`);
+    }, 350);
+
+    return true;
+  }, [applyScaleWeightReading, readScaleBridge]);
 
   const configureUsbSerialAdapter = useCallback(
     async (device, interfaceNumber) => {
@@ -686,6 +826,10 @@ export default function POSPage() {
 
   const disconnectScale = useCallback(async () => {
     scaleUsbLoopRef.current = false;
+    if (scaleBridgeTimerRef.current) {
+      window.clearInterval(scaleBridgeTimerRef.current);
+      scaleBridgeTimerRef.current = null;
+    }
     try {
       await scaleReaderRef.current?.cancel();
     } catch {}
@@ -831,6 +975,10 @@ export default function POSPage() {
 
   const connectScale = useCallback(async () => {
     if (typeof navigator === "undefined" || !navigator.serial) {
+      if (isAndroidRuntime()) {
+        const bridgeConnected = await connectScaleWithBridge();
+        if (bridgeConnected) return;
+      }
       await connectScaleWithWebUsb();
       return;
     }
@@ -901,7 +1049,12 @@ export default function POSPage() {
         showToast(err?.message || "Unable to connect weighing scale", "error");
       }
     }
-  }, [applyScaleWeightReading, connectScaleWithWebUsb, noteScaleRawData]);
+  }, [
+    applyScaleWeightReading,
+    connectScaleWithBridge,
+    connectScaleWithWebUsb,
+    noteScaleRawData,
+  ]);
 
   useEffect(
     () => () => {
@@ -2522,10 +2675,13 @@ export default function POSPage() {
 
         {scaleConnected && scaleStatus === "Connected · waiting" ? (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800 shadow-sm">
-            Scale connected, but no readable weight data received yet. Press the
-            scale PRINT key once, or set the scale data transmission mode to
-            continuous / print output at 9600 baud, 8 data bits, no parity, 1
-            stop bit.{" "}
+            Scale connected, but no readable weight data received yet.{" "}
+            {isAndroidRuntime()
+              ? "This Android POS needs the local scale bridge service if direct USB data stays unreadable. "
+              : ""}
+            Press the scale PRINT key once, or set the scale data transmission
+            mode to continuous / print output at 9600 baud, 8 data bits, no
+            parity, 1 stop bit.{" "}
             {scaleLastData ? (
               <span className="font-black">Last data: {scaleLastData}</span>
             ) : (
