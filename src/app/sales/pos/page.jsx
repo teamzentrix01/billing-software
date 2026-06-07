@@ -423,6 +423,8 @@ export default function POSPage() {
   const searchInputRef = useRef(null);
   const scalePortRef = useRef(null);
   const scaleReaderRef = useRef(null);
+  const scaleUsbDeviceRef = useRef(null);
+  const scaleUsbLoopRef = useRef(false);
   const activeScaleCartKeyRef = useRef("");
 
   const [user, setUser] = useState(null);
@@ -482,7 +484,35 @@ export default function POSPage() {
     setTimeout(() => setToast(null), 3000);
   };
 
+  const applyScaleWeightReading = useCallback((raw) => {
+    const weightKg = parseScaleWeight(raw);
+    if (weightKg === null) return false;
+
+    const normalizedWeight = Number(weightKg.toFixed(3));
+    setScaleWeightKg(normalizedWeight);
+    setScaleStatus(`${normalizedWeight.toFixed(3)} KG`);
+    const activeCartKey = activeScaleCartKeyRef.current;
+    if (activeCartKey) {
+      setCart((current) =>
+        current.map((item) => {
+          if (getCartItemKey(item) !== activeCartKey) return item;
+          const weightedUnit = getWeightedUnitKind(item.unit);
+          if (!weightedUnit) return item;
+          const nextQty = Math.min(
+            getScaleQuantityForUnit(normalizedWeight, weightedUnit),
+            toNumber(item.availableStock),
+          );
+          return Number(item.qty) === nextQty
+            ? item
+            : { ...item, qty: nextQty };
+        }),
+      );
+    }
+    return true;
+  }, []);
+
   const disconnectScale = useCallback(async () => {
+    scaleUsbLoopRef.current = false;
     try {
       await scaleReaderRef.current?.cancel();
     } catch {}
@@ -492,8 +522,12 @@ export default function POSPage() {
     try {
       await scalePortRef.current?.close();
     } catch {}
+    try {
+      await scaleUsbDeviceRef.current?.close();
+    } catch {}
     scaleReaderRef.current = null;
     scalePortRef.current = null;
+    scaleUsbDeviceRef.current = null;
     setScaleConnected(false);
     setScaleWeightKg(0);
     setScaleStatus("");
@@ -501,12 +535,98 @@ export default function POSPage() {
     setActiveScaleCartKey("");
   }, []);
 
-  const connectScale = useCallback(async () => {
-    if (typeof navigator === "undefined" || !navigator.serial) {
+  const connectScaleWithWebUsb = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.usb) {
       showToast(
-        "This browser does not support USB weighing scale connection. Use Chrome/Edge with Web Serial.",
+        "This POS browser cannot access USB scale. Open this page in Chrome/Edge, or install a POS browser that supports USB/WebUSB.",
         "error",
       );
+      return;
+    }
+
+    let device;
+    try {
+      device = await navigator.usb.requestDevice({ filters: [] });
+      await device.open();
+      if (!device.configuration) await device.selectConfiguration(1);
+
+      let selectedInterface = null;
+      let selectedAlternate = null;
+      let inputEndpoint = null;
+      for (const usbInterface of device.configuration.interfaces || []) {
+        for (const alternate of usbInterface.alternates || []) {
+          const endpoint = (alternate.endpoints || []).find(
+            (candidate) =>
+              candidate.direction === "in" &&
+              ["bulk", "interrupt"].includes(candidate.type),
+          );
+          if (endpoint) {
+            selectedInterface = usbInterface;
+            selectedAlternate = alternate;
+            inputEndpoint = endpoint;
+            break;
+          }
+        }
+        if (inputEndpoint) break;
+      }
+
+      if (!selectedInterface || !inputEndpoint) {
+        throw new Error("No readable USB endpoint found for this scale.");
+      }
+
+      await device.claimInterface(selectedInterface.interfaceNumber);
+      if (selectedAlternate?.alternateSetting) {
+        await device.selectAlternateInterface(
+          selectedInterface.interfaceNumber,
+          selectedAlternate.alternateSetting,
+        );
+      }
+
+      scaleUsbDeviceRef.current = device;
+      scaleUsbLoopRef.current = true;
+      setScaleConnected(true);
+      setScaleStatus("Scale connected · USB");
+      showToast("Weighing scale connected through USB", "success");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (scaleUsbLoopRef.current) {
+        const result = await device.transferIn(
+          inputEndpoint.endpointNumber,
+          64,
+        );
+        if (!scaleUsbLoopRef.current) break;
+        if (!result?.data) continue;
+        buffer += decoder.decode(result.data, { stream: true });
+        const chunks = buffer.split(/\r?\n/);
+        buffer = chunks.pop() || "";
+        for (const chunk of chunks) {
+          applyScaleWeightReading(chunk);
+        }
+        if (buffer.length >= 8 && applyScaleWeightReading(buffer)) {
+          buffer = "";
+        }
+      }
+    } catch (err) {
+      scaleUsbLoopRef.current = false;
+      setScaleConnected(false);
+      setScaleStatus("");
+      if (err?.name !== "NotFoundError") {
+        showToast(
+          err?.message ||
+            "Unable to connect USB scale. Try Chrome/Edge or check USB permission.",
+          "error",
+        );
+      }
+      try {
+        await device?.close();
+      } catch {}
+    }
+  }, [applyScaleWeightReading]);
+
+  const connectScale = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.serial) {
+      await connectScaleWithWebUsb();
       return;
     }
 
@@ -523,31 +643,7 @@ export default function POSPage() {
       scaleReaderRef.current = reader;
       let buffer = "";
       const applyWeight = (raw) => {
-        const weightKg = parseScaleWeight(raw);
-        if (weightKg !== null) {
-          const normalizedWeight = Number(weightKg.toFixed(3));
-          setScaleWeightKg(normalizedWeight);
-          setScaleStatus(`${normalizedWeight.toFixed(3)} KG`);
-          const activeCartKey = activeScaleCartKeyRef.current;
-          if (activeCartKey) {
-            setCart((current) =>
-              current.map((item) => {
-                if (getCartItemKey(item) !== activeCartKey) return item;
-                const weightedUnit = getWeightedUnitKind(item.unit);
-                if (!weightedUnit) return item;
-                const nextQty = Math.min(
-                  getScaleQuantityForUnit(normalizedWeight, weightedUnit),
-                  toNumber(item.availableStock),
-                );
-                return Number(item.qty) === nextQty
-                  ? item
-                  : { ...item, qty: nextQty };
-              }),
-            );
-          }
-          return true;
-        }
-        return false;
+        return applyScaleWeightReading(raw);
       };
 
       while (true) {
@@ -570,7 +666,7 @@ export default function POSPage() {
         showToast(err?.message || "Unable to connect weighing scale", "error");
       }
     }
-  }, []);
+  }, [applyScaleWeightReading, connectScaleWithWebUsb]);
 
   useEffect(
     () => () => {
