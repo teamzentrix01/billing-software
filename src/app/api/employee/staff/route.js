@@ -126,7 +126,7 @@ function mapEmployeeRow(row) {
     employmentStatus: row.employment_status || 'Active',
     gender: row.gender || '',
     permissions: Array.isArray(row.permissions) ? row.permissions : [],
-    regionStore: row.region_store || '',
+    regionStore: row.assigned_store_ids || row.region_store || '',
     warehouse: row.warehouse || '',
     userType: row.user_type || '',
     dateOfBirth: row.date_of_birth || null,
@@ -176,6 +176,9 @@ export async function GET(request) {
               e.permissions,
               e.region_store,
               e.warehouse,
+              (SELECT string_agg(us.store_id::text, ',' ORDER BY us.store_id)
+               FROM user_stores us
+               WHERE us.user_id = e.user_id AND us.is_active = TRUE) AS assigned_store_ids,
               e.department_name,
               e.customer_name,
               e.user_type,
@@ -226,10 +229,16 @@ export async function POST(request) {
     const emailAddress = toString(body.email_address || body.emailAddress).toLowerCase();
     const roleId = body.role_id ?? body.roleId ?? null;
     const roleName = toString(body.role_name || body.roleName);
-    const assignedStores = normalizeStoreIds(body.assigned_stores || body.assignedStores || body.store_ids || body.storeIds || body.store_id || body.storeId);
+    const regionStore = Array.isArray(body.region_store || body.regionStore)
+      ? (body.region_store || body.regionStore).map((item) => String(item).trim()).filter(Boolean).join(',')
+      : toString(body.region_store || body.regionStore);
+    const warehouse = Array.isArray(body.warehouse)
+      ? body.warehouse.map((item) => String(item).trim()).filter(Boolean).join(',')
+      : toString(body.warehouse);
+    const assignedStores = normalizeStoreIds(
+      body.assigned_stores || body.assignedStores || body.store_ids || body.storeIds || body.store_id || body.storeId || regionStore
+    );
     const permissions = normalizePermissions(body.permissions);
-    const regionStore = toString(body.region_store || body.regionStore);
-    const warehouse = toString(body.warehouse);
     const departmentId = body.department_id ?? body.departmentId ?? null;
     const departmentName = toString(body.department_name || body.departmentName);
     const customerName = toString(body.customer_name || body.customerName);

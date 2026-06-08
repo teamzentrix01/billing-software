@@ -122,10 +122,16 @@ export async function PUT(request, { params }) {
     const emailAddress = toString(body.email_address || body.emailAddress).toLowerCase();
     const roleId = body.role_id ?? body.roleId ?? null;
     const roleName = toString(body.role_name || body.roleName);
-    const assignedStores = normalizeStoreIds(body.assigned_stores || body.assignedStores || body.store_ids || body.storeIds || body.store_id || body.storeId);
+    const regionStore = Array.isArray(body.region_store || body.regionStore)
+      ? (body.region_store || body.regionStore).map((item) => String(item).trim()).filter(Boolean).join(',')
+      : toString(body.region_store || body.regionStore);
+    const warehouse = Array.isArray(body.warehouse)
+      ? body.warehouse.map((item) => String(item).trim()).filter(Boolean).join(',')
+      : toString(body.warehouse);
+    const assignedStores = normalizeStoreIds(
+      body.assigned_stores || body.assignedStores || body.store_ids || body.storeIds || body.store_id || body.storeId || regionStore
+    );
     const permissions = normalizePermissions(body.permissions);
-    const regionStore = toString(body.region_store || body.regionStore);
-    const warehouse = toString(body.warehouse);
     const departmentId = body.department_id ?? body.departmentId ?? null;
     const departmentName = toString(body.department_name || body.departmentName);
     const customerName = toString(body.customer_name || body.customerName);

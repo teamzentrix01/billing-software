@@ -18,8 +18,8 @@ const INITIAL_FORM = {
   emailAddress: '',
   roleName: '',
   permissions: [],
-  regionStore: '',
-  warehouse: '',
+  regionStore: [],
+  warehouse: [],
   departmentId: '',
   customerName: '',
   userType: 'Regular',
@@ -254,9 +254,30 @@ function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 }
 
-function MultiSelect({ label, options, value, onChange, placeholder = 'Select', required = false }) {
+function parseMultiValue(value) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  const str = String(value || '').trim();
+  if (!str) return [];
+  return str.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function MultiSelect({ label, options, value, onChange, placeholder = 'Select', required = false, showSelectAll = false }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const selectAllRef = useRef(null);
+
+  const selectableOptions = useMemo(
+    () => options.filter((option) => option.value),
+    [options]
+  );
+
+  const allValues = useMemo(
+    () => selectableOptions.map((option) => option.value),
+    [selectableOptions]
+  );
+
+  const allSelected = allValues.length > 0 && allValues.every((optionValue) => value.includes(optionValue));
+  const someSelected = allValues.some((optionValue) => value.includes(optionValue));
 
   useEffect(() => {
     const onDoc = (event) => {
@@ -266,12 +287,18 @@ function MultiSelect({ label, options, value, onChange, placeholder = 'Select', 
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someSelected && !allSelected;
+    }
+  }, [someSelected, allSelected, open]);
+
   const labels = useMemo(() => {
-    const selected = options.filter((option) => value.includes(option.value));
+    const selected = selectableOptions.filter((option) => value.includes(option.value));
     if (selected.length === 0) return placeholder;
     if (selected.length <= 2) return selected.map((option) => option.label).join(', ');
     return `${selected.slice(0, 2).map((option) => option.label).join(', ')} +${selected.length - 2}`;
-  }, [options, placeholder, value]);
+  }, [selectableOptions, placeholder, value]);
 
   return (
     <div ref={ref}>
@@ -287,28 +314,44 @@ function MultiSelect({ label, options, value, onChange, placeholder = 'Select', 
       {open && (
         <div className="relative z-30">
           <div className="absolute mt-2 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-auto">
-            {options.length === 0 ? (
+            {selectableOptions.length === 0 ? (
               <div className="px-3 py-2 text-[12.5px] text-gray-400">No options available</div>
-            ) : options.map((option) => {
-              const checked = value.includes(option.value);
-              return (
-                <label key={option.value} className="flex items-center gap-2 px-3 py-2 text-[13px] cursor-pointer hover:bg-gray-50">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={(event) => {
-                      onChange(
-                        event.target.checked
-                          ? [...value, option.value]
-                          : value.filter((selected) => selected !== option.value)
-                      );
-                    }}
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <span className="flex-1 text-gray-700">{option.label}</span>
-                </label>
-              );
-            })}
+            ) : (
+              <>
+                {showSelectAll && (
+                  <label className="flex items-center gap-2 px-3 py-2 text-[13px] cursor-pointer hover:bg-gray-50 border-b border-gray-100 font-medium">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={() => onChange(allSelected ? [] : allValues)}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="flex-1 text-gray-700">Select All</span>
+                  </label>
+                )}
+                {selectableOptions.map((option) => {
+                  const checked = value.includes(option.value);
+                  return (
+                    <label key={option.value} className="flex items-center gap-2 px-3 py-2 text-[13px] cursor-pointer hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => {
+                          onChange(
+                            event.target.checked
+                              ? [...value, option.value]
+                              : value.filter((selected) => selected !== option.value)
+                          );
+                        }}
+                        className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="flex-1 text-gray-700">{option.label}</span>
+                    </label>
+                  );
+                })}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -468,34 +511,18 @@ export default function EmployeeStaffPage() {
   );
 
   const storeOptions = useMemo(
-    () => {
-      if (stores.length === 0) {
-        return [{ value: '', label: 'Select Store/Region' }];
-      }
-      return [
-        { value: '', label: 'Select Store/Region' },
-        ...stores.map((store) => ({
-          value: String(store.id),
-          label: `${store.name}${store.city ? ` (${store.city}, ${store.state || ''})` : ''}`.trim(),
-        })),
-      ];
-    },
+    () => stores.map((store) => ({
+      value: String(store.id),
+      label: `${store.name}${store.city ? ` (${store.city}, ${store.state || ''})` : ''}`.trim(),
+    })),
     [stores]
   );
 
   const warehouseOptions = useMemo(
-    () => {
-      if (warehouses.length === 0) {
-        return [{ value: '', label: 'Select Warehouse' }];
-      }
-      return [
-        { value: '', label: 'Select Warehouse' },
-        ...warehouses.map((warehouse) => ({
-          value: String(warehouse.id),
-          label: `${warehouse.name}${warehouse.manager_name ? ` - Mgr: ${warehouse.manager_name}` : ''}`,
-        })),
-      ];
-    },
+    () => warehouses.map((warehouse) => ({
+      value: String(warehouse.id),
+      label: `${warehouse.name}${warehouse.manager_name ? ` - Mgr: ${warehouse.manager_name}` : ''}`,
+    })),
     [warehouses]
   );
 
@@ -551,8 +578,8 @@ export default function EmployeeStaffPage() {
       emailAddress: employee.emailAddress ?? '',
       roleName: employee.role || '',
       permissions: Array.isArray(employee.permissions) ? employee.permissions : [],
-      regionStore: employee.regionStore ?? '',
-      warehouse: employee.warehouse ?? '',
+      regionStore: parseMultiValue(employee.regionStore),
+      warehouse: parseMultiValue(employee.warehouse),
       departmentId: employee.department ? String(departments.find((d) => (d.departmentName || d.department_name) === employee.department)?.id || '') : '',
       customerName: employee.customerName ?? '',
       userType: employee.userType || 'Regular',
@@ -616,7 +643,7 @@ export default function EmployeeStaffPage() {
     if (form.permissions.length === 0) return alert('Select at least one permission');
 
     const systemRole = form.roleName.trim().toLowerCase().replace(/\s+/g, '_');
-    if ((systemRole === 'admin' || systemRole === 'manager') && !form.regionStore) {
+    if ((systemRole === 'admin' || systemRole === 'manager') && form.regionStore.length === 0) {
       return alert('Select a store for Admin/Manager access');
     }
 
@@ -631,10 +658,10 @@ export default function EmployeeStaffPage() {
         email_address: form.emailAddress.trim(),
         role_id: null,
         role_name: form.roleName.trim(),
-        assigned_stores: form.regionStore ? [Number(form.regionStore)].filter(Number.isFinite) : [],
+        assigned_stores: form.regionStore.map(Number).filter(Number.isFinite),
         permissions: form.permissions,
-        region_store: form.regionStore,
-        warehouse: form.warehouse,
+        region_store: form.regionStore.join(','),
+        warehouse: form.warehouse.join(','),
         department_id: form.departmentId ? Number(form.departmentId) : null,
         department_name: departments.find((department) => String(department.id) === String(form.departmentId))?.departmentName || '',
         customer_name: form.customerName,
@@ -1139,18 +1166,22 @@ export default function EmployeeStaffPage() {
                   required
                 />
 
-                <SelectField
+                <MultiSelect
                   label="Regions & Stores"
+                  options={storeOptions}
                   value={form.regionStore}
                   onChange={(regionStore) => setForm({ ...form, regionStore })}
-                  options={storeOptions}
+                  placeholder="Select Store/Region"
+                  showSelectAll
                 />
 
-                <SelectField
+                <MultiSelect
                   label="Warehouse"
+                  options={warehouseOptions}
                   value={form.warehouse}
                   onChange={(warehouse) => setForm({ ...form, warehouse })}
-                  options={warehouseOptions}
+                  placeholder="Select Warehouse"
+                  showSelectAll
                 />
 
                 <SelectField
