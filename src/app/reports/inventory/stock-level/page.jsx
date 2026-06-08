@@ -27,10 +27,6 @@ const columns = [
     "label": "Store"
   },
   {
-    "key": "opening_stock",
-    "label": "Opening Stock"
-  },
-  {
     "key": "stock_in",
     "label": "Stock In"
   },

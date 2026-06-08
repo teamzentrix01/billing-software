@@ -107,7 +107,6 @@ const REPORTS = {
       { key: 'product',       label: 'Product'       },
       { key: 'sku',           label: 'SKU'           },
       { key: 'store',         label: 'Store'         },
-      { key: 'opening_stock', label: 'Opening Stock' },
       { key: 'stock_in',      label: 'Stock In'      },
       { key: 'stock_out',     label: 'Stock Out'     },
       { key: 'current_stock', label: 'Current Stock' },
@@ -122,7 +121,6 @@ const REPORTS = {
       { key: 'product',       label: 'Product'       },
       { key: 'sku',           label: 'SKU'           },
       { key: 'store',         label: 'Store'         },
-      { key: 'opening_stock', label: 'Opening Stock' },
       { key: 'stock_in',      label: 'Stock In'      },
       { key: 'stock_out',     label: 'Stock Out'     },
       { key: 'current_stock', label: 'Current Stock' },
@@ -229,6 +227,21 @@ function money(value) {
 function number(value) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getStockDisplayUnit(unit) {
+  const normalized = String(unit || 'PCS').trim().toUpperCase();
+  if (['KG', 'KGS', 'KILOGRAM', 'KILOGRAMS', 'GRAM', 'GRAMS', 'GM', 'G'].includes(normalized)) {
+    return 'GRAMS';
+  }
+  return normalized || 'PCS';
+}
+
+function stockDisplayQty(value, unit) {
+  const normalized = String(unit || 'PCS').trim().toUpperCase();
+  const factor = ['KG', 'KGS', 'KILOGRAM', 'KILOGRAMS'].includes(normalized) ? 1000 : 1;
+  const converted = number(value) * factor;
+  return Number.isInteger(converted) ? converted : Number(converted.toFixed(3));
 }
 
 function isoDate(value) {
@@ -702,35 +715,6 @@ async function getStockLevelReport(filters, user) {
            AND ib.status = 'active'
        ), 0) AS current_stock,
 
-       -- Opening stock = all-time stock in BEFORE fromDate minus all-time stock out BEFORE fromDate
-       COALESCE((
-         SELECT SUM(sii.qty)
-         FROM stock_in_items sii
-         JOIN stock_in si ON si.id = sii.stock_in_id
-         WHERE sii.product_id = p.id
-           AND si.destination_id = ps.store_id
-           AND si.status = 'confirmed'
-           AND DATE(si.created_at) < $${pFrom}
-       ), 0)
-       - COALESCE((
-         SELECT SUM(soi.qty)
-         FROM stock_out_items soi
-         JOIN stock_out so ON so.id = soi.stock_out_id
-         WHERE soi.product_id = p.id
-           AND so.destination_id = ps.store_id
-           AND so.status = 'confirmed'
-           AND DATE(so.created_at) < $${pFrom}
-       ), 0)
-       - COALESCE((
-         SELECT SUM(sbi.qty)
-         FROM sales_bill_items sbi
-         JOIN sales_bills sb ON sb.id = sbi.sales_bill_id
-         WHERE sbi.product_id = p.id
-           AND sb.store_id = ps.store_id
-           AND sb.status IN ('paid', 'completed')
-           AND DATE(sb.created_at AT TIME ZONE 'Asia/Kolkata') < $${pFrom}
-       ), 0) AS opening_stock,
-
        -- Stock In within date range
        COALESCE((
          SELECT SUM(sii.qty)
@@ -772,21 +756,20 @@ async function getStockLevelReport(filters, user) {
   );
 
   return res.rows.map((row) => {
-    const opening       = number(row.opening_stock);
     const stockIn       = number(row.stock_in);
     const stockOut      = number(row.stock_out);
     const currentStock  = number(row.current_stock);
     const lowStockValue = number(row.low_stock_value);
+    const displayUnit   = getStockDisplayUnit(row.unit);
     return {
       id:            `stock-${row.id}-${row.store}`,
       product:       row.product,
       sku:           row.sku || '',
       store:         row.store,
-      opening_stock: opening,
-      stock_in:      stockIn,
-      stock_out:     stockOut,
-      current_stock: currentStock,
-      unit:          row.unit || 'PCS',
+      stock_in:      stockDisplayQty(stockIn, row.unit),
+      stock_out:     stockDisplayQty(stockOut, row.unit),
+      current_stock: stockDisplayQty(currentStock, row.unit),
+      unit:          displayUnit,
       status:        lowStockValue > 0 && currentStock <= lowStockValue
                        ? 'Low'
                        : currentStock <= 0 ? 'Out' : 'In Stock',

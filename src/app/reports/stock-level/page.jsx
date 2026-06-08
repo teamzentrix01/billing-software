@@ -11,7 +11,6 @@ const columns = [
   { key: 'product',       label: 'Product'       },
   { key: 'sku',           label: 'SKU'           },
   { key: 'store',         label: 'Store'         },
-  { key: 'opening_stock', label: 'Opening Stock' },
   { key: 'stock_in',      label: 'Stock In'      },
   { key: 'stock_out',     label: 'Stock Out'     },
   { key: 'current_stock', label: 'Current Stock' },
