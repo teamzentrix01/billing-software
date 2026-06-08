@@ -1,7 +1,8 @@
 import { successResponse, errorResponse, validationError, notFoundError } from '@/lib/api-response';
 import { getClient, query } from '@/lib/db';
 import { ensureSettingsSchema } from '@/lib/settingsSchema';
-import { requireAuth, requireStore } from '@/lib/api-protection';
+import { requireAuth, requirePermission, requireStore } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 function normalizeType(value = '') {
   return String(value).trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
@@ -198,10 +199,20 @@ export async function POST(request, context) {
 }
 
 export async function DELETE(request, context) {
+  let client;
   try {
     await ensureSettingsSchema();
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
+    const permissionCheck = requirePermission(
+      auth.user,
+      'MANAGE_STORES',
+      'MANAGE_BILLING',
+      'MANAGE_PAYMENTS',
+      'MANAGE_TAXES',
+      'MANAGE_INVENTORY'
+    );
+    if (permissionCheck.error) return permissionCheck.error;
 
     const type = normalizeType((await context.params)?.type);
     const id = parsePositiveInt(new URL(request.url).searchParams.get('id'));
@@ -219,10 +230,17 @@ export async function DELETE(request, context) {
       if (storeCheck.error) return storeCheck.error;
     }
 
-    await query('DELETE FROM settings_records WHERE id = $1 AND setting_type = $2', [id, type]);
+    client = await getClient();
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, `Setting deleted: ${type}`);
+    await client.query('DELETE FROM settings_records WHERE id = $1 AND setting_type = $2', [id, type]);
+    await client.query('COMMIT');
     return successResponse({ id }, 'Setting deleted');
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     console.error('[settings DELETE]', err);
     return errorResponse(err.message || 'Failed to delete setting');
+  } finally {
+    if (client) client.release();
   }
 }

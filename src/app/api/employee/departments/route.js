@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { getClient, query } from '@/lib/db';
 import { ensureEmployeeDepartmentsSchema } from '@/lib/employeeDepartmentsSchema';
+import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 function normalizeUserIds(input) {
   if (Array.isArray(input)) {
@@ -124,8 +126,13 @@ export async function PUT(request) {
 }
 
 export async function DELETE(request) {
+  const client = await getClient();
   try {
     await ensureEmployeeDepartmentsSchema();
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    const permissionCheck = requirePermission(auth.user, 'MANAGE_USERS');
+    if (permissionCheck.error) return permissionCheck.error;
 
     const url = new URL(request.url);
     const id = Number(url.searchParams.get('id'));
@@ -134,15 +141,22 @@ export async function DELETE(request) {
       return NextResponse.json({ error: 'Department id is required' }, { status: 400 });
     }
 
-    const res = await query('DELETE FROM employee_departments WHERE id = $1 RETURNING id', [id]);
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Employee department deleted');
+    const res = await client.query('DELETE FROM employee_departments WHERE id = $1 RETURNING id', [id]);
 
     if (res.rowCount === 0) {
+      await client.query('ROLLBACK');
       return NextResponse.json({ error: 'Department not found' }, { status: 404 });
     }
 
+    await client.query('COMMIT');
     return NextResponse.json({ success: true, id });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('[employee departments DELETE]', err.message);
     return NextResponse.json({ error: 'Failed to delete department' }, { status: 500 });
+  } finally {
+    client.release();
   }
 }

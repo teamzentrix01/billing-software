@@ -1,5 +1,7 @@
-import { query } from '@/lib/db';
+import { getClient, query } from '@/lib/db';
 import { successResponse, errorResponse, notFound, validationError } from '@/lib/apiResponse';
+import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 const SELECT_SERVICE = `
   SELECT s.id, s.name, s.price, s.duration_minutes, s.is_active, s.hsn_code, s.sku, s.description, s.created_at, s.updated_at,
@@ -70,11 +72,27 @@ export async function PUT(request, { params }) {
 }
 
 export async function DELETE(request, { params }) {
+  let client;
   try {
-    const result = await query(`DELETE FROM services WHERE id = $1 RETURNING id`, [params.id]);
-    if (!result.rows.length) return notFound('Service not found');
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    const permissionCheck = requirePermission(auth.user, 'MANAGE_CATALOG');
+    if (permissionCheck.error) return permissionCheck.error;
+
+    client = await getClient();
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Service deleted');
+    const result = await client.query(`DELETE FROM services WHERE id = $1 RETURNING id`, [params.id]);
+    if (!result.rows.length) {
+      await client.query('ROLLBACK');
+      return notFound('Service not found');
+    }
+    await client.query('COMMIT');
     return successResponse({ id: params.id }, 'Service deleted successfully');
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(err.message);
+  } finally {
+    client?.release();
   }
 }

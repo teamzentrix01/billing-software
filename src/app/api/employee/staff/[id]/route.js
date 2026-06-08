@@ -4,6 +4,7 @@ import { query, getClient } from '@/lib/db';
 import { ensureEmployeesSchema } from '@/lib/employeesSchema';
 import { ensureUsersTable, normalizePhone, normalizeEmail } from '@/lib/userAuth';
 import { requireAuth, requirePermission, requireStore } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 function toDate(value) {
   if (!value) return null;
@@ -302,6 +303,7 @@ export async function PUT(request, { params }) {
 }
 
 export async function DELETE(request, { params }) {
+  const client = await getClient();
   try {
     await ensureEmployeesSchema();
     const auth = await requireAuth(request);
@@ -314,7 +316,9 @@ export async function DELETE(request, { params }) {
       return NextResponse.json({ error: 'Invalid employee id' }, { status: 400 });
     }
 
-    const res = await query(
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Employee deleted');
+    const res = await client.query(
       `DELETE FROM employees e
        WHERE e.id = $1
          AND (
@@ -331,19 +335,24 @@ export async function DELETE(request, { params }) {
     );
 
     if (!res.rows.length) {
+      await client.query('ROLLBACK');
       return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     }
 
+    await client.query('COMMIT');
     return NextResponse.json(
       { success: true, message: 'Employee deleted successfully', id: employeeId },
       { status: 200 }
     );
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('[employee staff DELETE]', err.message);
     return NextResponse.json(
       { error: err.message || 'Failed to delete employee' },
       { status: 500 }
     );
+  } finally {
+    client.release();
   }
 }
 

@@ -1,5 +1,7 @@
-import { query } from '@/lib/db';
+import { getClient, query } from '@/lib/db';
 import { successResponse, errorResponse, notFoundError, validationError } from '@/lib/api-response';
+import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 async function ensureBrandExtras() {
   await query(`ALTER TABLE brands ADD COLUMN IF NOT EXISTS category_id BIGINT REFERENCES categories(id) ON DELETE SET NULL`);
@@ -75,12 +77,28 @@ export async function PUT(request) {
 }
 
 export async function DELETE(request) {
+  let client;
   try {
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    const permissionCheck = requirePermission(auth.user, 'MANAGE_CATALOG');
+    if (permissionCheck.error) return permissionCheck.error;
+
     const id = getIdFromRequest(request);
-    const result = await query(`DELETE FROM brands WHERE id = $1::int RETURNING *`, [id]);
-    if (!result.rows.length) return notFoundError('Brand not found');
+    client = await getClient();
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Brand deleted');
+    const result = await client.query(`DELETE FROM brands WHERE id = $1::int RETURNING *`, [id]);
+    if (!result.rows.length) {
+      await client.query('ROLLBACK');
+      return notFoundError('Brand not found');
+    }
+    await client.query('COMMIT');
     return successResponse(null, 'Brand deleted');
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(err.message);
+  } finally {
+    client?.release();
   }
 }

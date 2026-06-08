@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { getClient, query } from '@/lib/db';
 import { ensureVendorsSchema } from '@/lib/vendorsSchema';
 import { validatePhoneNumber } from '@/lib/phoneValidator';
 import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 function mapVendor(r) {
   return {
@@ -167,6 +168,7 @@ export async function PUT(request, context) {
 }
 
 export async function DELETE(request, context) {
+  let client;
   try {
     await ensureVendorsSchema();
     const auth = await requireAuth(request);
@@ -185,11 +187,21 @@ export async function DELETE(request, context) {
       await query('UPDATE vendors SET is_active = FALSE, updated_at = NOW() WHERE id = $1', [id]);
       return NextResponse.json({ success: true, archived: true });
     }
-    const res = await query('DELETE FROM vendors WHERE id = $1 RETURNING id', [id]);
-    if (!res.rows[0]) return NextResponse.json({ error: 'Vendor not found' }, { status: 404 });
+    client = await getClient();
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Vendor deleted');
+    const res = await client.query('DELETE FROM vendors WHERE id = $1 RETURNING id', [id]);
+    if (!res.rows[0]) {
+      await client.query('ROLLBACK');
+      return NextResponse.json({ error: 'Vendor not found' }, { status: 404 });
+    }
+    await client.query('COMMIT');
     return NextResponse.json({ success: true, deleted: true });
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     console.error('[vendors DELETE id]', err.message);
     return NextResponse.json({ error: 'Failed to delete vendor' }, { status: 500 });
+  } finally {
+    client?.release();
   }
 }

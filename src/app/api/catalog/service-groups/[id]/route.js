@@ -1,6 +1,8 @@
-import { query } from '@/lib/db';
+import { getClient, query } from '@/lib/db';
 import { successResponse, errorResponse, notFoundError, validationError } from '@/lib/api-response';
 import { ensureCatalogExtrasSchema } from '@/lib/catalogExtrasSchema';
+import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 // ─── GET /api/catalog/service-groups/[id] ──────────────────────
 export async function GET(request, { params }) {
@@ -14,7 +16,7 @@ export async function GET(request, { params }) {
       [id]
     );
 
-    if (!result.rows.length) return notFound('Service Group not found');
+    if (!result.rows.length) return notFoundError('Service Group not found');
     return successResponse(result.rows[0]);
   } catch (err) {
     return errorResponse(err.message);
@@ -50,7 +52,7 @@ export async function PUT(request, { params }) {
       ]
     );
 
-    if (!result.rows.length) return notFound('Service Group not found');
+    if (!result.rows.length) return notFoundError('Service Group not found');
     return successResponse(result.rows[0], 'Service Group updated successfully');
   } catch (err) {
     if (err.code === '23505') {
@@ -62,17 +64,33 @@ export async function PUT(request, { params }) {
 
 // ─── DELETE /api/catalog/service-groups/[id] ────────────────────
 export async function DELETE(request, { params }) {
+  let client;
   try {
     await ensureCatalogExtrasSchema();
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    const permissionCheck = requirePermission(auth.user, 'MANAGE_CATALOG');
+    if (permissionCheck.error) return permissionCheck.error;
+
     const { id } = await params;
-    const result = await query(
+    client = await getClient();
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Service Group deleted');
+    const result = await client.query(
       `DELETE FROM service_groups WHERE id = $1 RETURNING id`,
       [id]
     );
 
-    if (!result.rows.length) return notFound('Service Group not found');
+    if (!result.rows.length) {
+      await client.query('ROLLBACK');
+      return notFoundError('Service Group not found');
+    }
+    await client.query('COMMIT');
     return successResponse({ id }, 'Service Group deleted successfully');
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(err.message);
+  } finally {
+    client?.release();
   }
 }

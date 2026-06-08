@@ -10,6 +10,7 @@ import {
   requirePermission,
   requireStore,
 } from "@/lib/api-protection";
+import { setRecycleBinContext } from "@/lib/recycleBin";
 import {
   buildStoreCodeDuplicateQuery,
   getStoreCode,
@@ -267,6 +268,7 @@ export async function DELETE(request, { params }) {
 
     client = await getClient();
     await client.query("BEGIN");
+    await setRecycleBinContext(client, auth.user.id, "Store deleted");
 
     const deletedDependencies = await deleteStoreDependencies(client, storeId);
     const del = await client.query(

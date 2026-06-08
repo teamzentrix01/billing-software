@@ -1,7 +1,9 @@
-import { query } from '@/lib/db';
+import { getClient, query } from '@/lib/db';
 import { successResponse, errorResponse, validationError } from '@/lib/api-response';
 import { ensureStoresSchema } from '@/lib/storesSchema';
 import { validatePhoneNumber } from '@/lib/phoneValidator';
+import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 function parseList(value) {
   if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
@@ -201,8 +203,13 @@ export async function PUT(request) {
 }
 
 export async function DELETE(request) {
+  let client;
   try {
     await ensureStoresSchema();
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    const permissionCheck = requirePermission(auth.user, 'MANAGE_STORES');
+    if (permissionCheck.error) return permissionCheck.error;
 
     const url = new URL(request.url);
     const id = parsePositiveIntegerId(url.searchParams.get('id'));
@@ -211,7 +218,10 @@ export async function DELETE(request) {
       return validationError([{ field: 'id', message: 'Warehouse id is required' }]);
     }
 
-    const res = await query(
+    client = await getClient();
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Warehouse deleted');
+    const res = await client.query(
       `DELETE FROM stores
        WHERE id = $1::bigint
          AND COALESCE(meta->>'locationType', 'Warehouse') = 'Warehouse'
@@ -220,12 +230,17 @@ export async function DELETE(request) {
     );
 
     if (!res.rows.length) {
+      await client.query('ROLLBACK');
       return errorResponse('Warehouse not found', 404);
     }
 
+    await client.query('COMMIT');
     return successResponse({ id }, 'Warehouse deleted');
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     console.error(err);
     return errorResponse(err.message || 'Failed to delete warehouse');
+  } finally {
+    client?.release();
   }
 }

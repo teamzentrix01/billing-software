@@ -152,6 +152,7 @@ export const menuItems = [
         label: 'Intelligence', icon: 'ti-message-chatbot',
         items: [
           { label: 'Admin Assistant', href: '/admin/assistant' },
+          { label: 'Recycle Bin', href: '/admin/recycle-bin' },
         ],
       },
     ],

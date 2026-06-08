@@ -1,5 +1,7 @@
-import { query } from '@/lib/db';
+import { getClient, query } from '@/lib/db';
 import { successResponse, errorResponse, notFoundError, validationError } from '@/lib/api-response';
+import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 async function ensureProductDiscountSchema() {
   await query(`
@@ -194,20 +196,37 @@ export async function PUT(request, { params }) {
 
 // ─── DELETE /api/catalog/products/[id] ───────────────────────
 export async function DELETE(request, { params }) {
+  let client;
   try {
+    await ensureProductDiscountSchema();
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    const permissionCheck = requirePermission(auth.user, 'MANAGE_CATALOG');
+    if (permissionCheck.error) return permissionCheck.error;
+
     const resolvedParams = await params;
     const productId = Number(resolvedParams?.id);
     if (!Number.isFinite(productId)) {
       return errorResponse('Invalid product id', 400);
     }
 
-    const result = await query(
+    client = await getClient();
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Product deleted from catalog');
+    const result = await client.query(
       `DELETE FROM products WHERE id = $1 RETURNING id`,
       [productId]
     );
-    if (!result.rows.length) return notFoundError('Product not found');
+    if (!result.rows.length) {
+      await client.query('ROLLBACK');
+      return notFoundError('Product not found');
+    }
+    await client.query('COMMIT');
     return successResponse({ id: productId }, 'Product deleted successfully');
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(err.message);
+  } finally {
+    client?.release();
   }
 }

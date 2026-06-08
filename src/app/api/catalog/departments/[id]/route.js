@@ -1,5 +1,7 @@
-import { query } from '@/lib/db';
+import { getClient, query } from '@/lib/db';
 import { successResponse, errorResponse, notFoundError, validationError } from '@/lib/api-response';
+import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 // ─── GET /api/catalog/departments/[id] ──────────────────────────
 export async function GET(request, { params }) {
@@ -12,7 +14,7 @@ export async function GET(request, { params }) {
       [id]
     );
 
-    if (!result.rows.length) return notFound('Department not found');
+    if (!result.rows.length) return notFoundError('Department not found');
     return successResponse(result.rows[0]);
   } catch (err) {
     return errorResponse(err.message);
@@ -44,7 +46,7 @@ export async function PUT(request, { params }) {
       ]
     );
 
-    if (!result.rows.length) return notFound('Department not found');
+    if (!result.rows.length) return notFoundError('Department not found');
     // handle category associations when provided
     if (Array.isArray(body.category_ids)) {
       // assign selected categories to this department
@@ -71,16 +73,32 @@ export async function PUT(request, { params }) {
 
 // ─── DELETE /api/catalog/departments/[id] ────────────────────────
 export async function DELETE(request, { params }) {
+  let client;
   try {
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    const permissionCheck = requirePermission(auth.user, 'MANAGE_CATALOG');
+    if (permissionCheck.error) return permissionCheck.error;
+
     const { id } = await params;
-    const result = await query(
+    client = await getClient();
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Department deleted');
+    const result = await client.query(
       `DELETE FROM departments WHERE id = $1 RETURNING id`,
       [id]
     );
 
-    if (!result.rows.length) return notFound('Department not found');
+    if (!result.rows.length) {
+      await client.query('ROLLBACK');
+      return notFoundError('Department not found');
+    }
+    await client.query('COMMIT');
     return successResponse({ id }, 'Department deleted successfully');
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(err.message);
+  } finally {
+    client?.release();
   }
 }

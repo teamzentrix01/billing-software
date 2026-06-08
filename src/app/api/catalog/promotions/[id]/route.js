@@ -1,6 +1,8 @@
-import { query } from '@/lib/db';
+import { getClient, query } from '@/lib/db';
 import { successResponse, errorResponse, notFound, validationError } from '@/lib/apiResponse';
 import { ensureCatalogExtrasSchema } from '@/lib/catalogExtrasSchema';
+import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 function toDateString(v) {
   if (!v) return null;
@@ -127,17 +129,33 @@ export async function PUT(request, { params }) {
 }
 
 export async function DELETE(request, { params }) {
+  let client;
   try {
     await ensureCatalogExtrasSchema();
     await ensurePromotionsColumns();
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    const permissionCheck = requirePermission(auth.user, 'MANAGE_CATALOG');
+    if (permissionCheck.error) return permissionCheck.error;
+
     const p = await params;
     const id = Number(p?.id);
     if (!id) return errorResponse('Invalid promotion id', 400);
 
-    const result = await query(`DELETE FROM promotions WHERE id = $1::int RETURNING *`, [id]);
-    if (!result.rows.length) return notFound('Promotion not found');
+    client = await getClient();
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Promotion deleted');
+    const result = await client.query(`DELETE FROM promotions WHERE id = $1::int RETURNING *`, [id]);
+    if (!result.rows.length) {
+      await client.query('ROLLBACK');
+      return notFound('Promotion not found');
+    }
+    await client.query('COMMIT');
     return successResponse(null, 'Promotion deleted');
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(err.message);
+  } finally {
+    client?.release();
   }
 }

@@ -10,6 +10,7 @@ import {
   requirePermission,
   requireStore,
 } from "@/lib/api-protection";
+import { setRecycleBinContext } from "@/lib/recycleBin";
 import { toDateInputValue } from "@/lib/dateUtils";
 
 function normalizeDate(value) {
@@ -271,6 +272,7 @@ export async function PUT(request, { params }) {
     }
 
     await client.query("BEGIN");
+    await setRecycleBinContext(client, auth.user.id, "Stock In deleted");
     const stockInRes = await client.query(
       `SELECT id, status, destination_id FROM stock_in WHERE id = $1 FOR UPDATE`,
       [id],

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { getClient, query } from '@/lib/db';
 import { ensureRolesSchema } from '@/lib/rolesSchema';
 import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 function normalizePermissions(input) {
   if (Array.isArray(input)) return input.filter(Boolean);
@@ -141,6 +142,7 @@ export async function PUT(request) {
 }
 
 export async function DELETE(request) {
+  const client = await getClient();
   try {
     await ensureRolesSchema();
     const auth = await requireAuth(request);
@@ -155,7 +157,9 @@ export async function DELETE(request) {
       return NextResponse.json({ error: 'Role id is required' }, { status: 400 });
     }
 
-    const res = await query(
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Employee role deleted');
+    const res = await client.query(
       `DELETE FROM roles
        WHERE id = $1 AND COALESCE((meta->>'system')::boolean, FALSE) = FALSE
        RETURNING id`,
@@ -163,12 +167,17 @@ export async function DELETE(request) {
     );
 
     if (res.rowCount === 0) {
+      await client.query('ROLLBACK');
       return NextResponse.json({ error: 'Role not found' }, { status: 404 });
     }
 
+    await client.query('COMMIT');
     return NextResponse.json({ success: true, id });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('[employee roles DELETE]', err.message);
     return NextResponse.json({ error: 'Failed to delete role' }, { status: 500 });
+  } finally {
+    client.release();
   }
 }

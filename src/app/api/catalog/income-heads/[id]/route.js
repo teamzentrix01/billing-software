@@ -1,5 +1,7 @@
-import { query } from '@/lib/db';
+import { getClient, query } from '@/lib/db';
 import { successResponse, errorResponse, notFoundError, validationError } from '@/lib/api-response';
+import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 export async function GET(request) {
   try {
@@ -14,7 +16,7 @@ export async function GET(request) {
       [id]
     );
 
-    if (!result.rows.length) return notFound('Income Head not found');
+    if (!result.rows.length) return notFoundError('Income Head not found');
     return successResponse(result.rows[0]);
   } catch (err) {
     return errorResponse(err.message);
@@ -38,7 +40,7 @@ export async function PUT(request) {
       [body.name?.trim(), body.code || null, body.is_active ?? true, id]
     );
 
-    if (!result.rows.length) return notFound('Income Head not found');
+    if (!result.rows.length) return notFoundError('Income Head not found');
     return successResponse(result.rows[0], 'Income Head updated successfully');
   } catch (err) {
     if (err.code === '23505') return errorResponse('Income Head already exists', 409);
@@ -47,14 +49,30 @@ export async function PUT(request) {
 }
 
 export async function DELETE(request) {
+  let client;
   try {
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    const permissionCheck = requirePermission(auth.user, 'MANAGE_CATALOG');
+    if (permissionCheck.error) return permissionCheck.error;
+
     const url = new URL(request.url);
     const parts = url.pathname.split('/').filter(Boolean);
     const id = parts[parts.length - 1];
-    const result = await query(`DELETE FROM income_heads WHERE id = $1::int RETURNING *`, [id]);
-    if (!result.rows.length) return notFound('Income Head not found');
+    client = await getClient();
+    await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Income Head deleted');
+    const result = await client.query(`DELETE FROM income_heads WHERE id = $1::int RETURNING *`, [id]);
+    if (!result.rows.length) {
+      await client.query('ROLLBACK');
+      return notFoundError('Income Head not found');
+    }
+    await client.query('COMMIT');
     return successResponse(null, 'Income Head deleted');
   } catch (err) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     return errorResponse(err.message);
+  } finally {
+    client?.release();
   }
 }

@@ -9,6 +9,7 @@ import { query } from '@/lib/db';
 import { unauthorizedError, forbiddenError } from '@/lib/api-response';
 import { ensureUsersTable } from '@/lib/userAuth';
 import { ensureAuditLogsSchema } from '@/lib/auditLogsSchema';
+import { ensureRecycleBinSchema } from '@/lib/recycleBinSchema';
 
 
 /**
@@ -18,6 +19,9 @@ import { ensureAuditLogsSchema } from '@/lib/auditLogsSchema';
 export async function extractAuthUser(request) {
   try {
     await ensureUsersTable();
+    await ensureRecycleBinSchema().catch((err) => {
+      console.warn('[API_PROTECTION] Recycle bin schema could not be ensured:', err.message);
+    });
 
     // Get token from cookies or Authorization header
     const cookieToken = request.cookies.get('access_token')?.value || 

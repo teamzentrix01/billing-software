@@ -1,6 +1,8 @@
 import { successResponse, errorResponse, validationError } from '@/lib/api-response';
 import { getClient, query } from '@/lib/db';
 import { ensureRegionsSchema } from '@/lib/regionsSchema';
+import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { setRecycleBinContext } from '@/lib/recycleBin';
 
 function parsePositiveIntegerId(value) {
   const id = String(value ?? '').trim();
@@ -228,6 +230,11 @@ export async function DELETE(request) {
 
   const client = await getClient();
   try {
+    const auth = await requireAuth(request);
+    if (auth.error) return auth.error;
+    const permissionCheck = requirePermission(auth.user, 'MANAGE_STORES');
+    if (permissionCheck.error) return permissionCheck.error;
+
     const url = new URL(request.url);
     const regionId = parsePositiveIntegerId(url.searchParams.get('id'));
 
@@ -236,6 +243,7 @@ export async function DELETE(request) {
     }
 
     await client.query('BEGIN');
+    await setRecycleBinContext(client, auth.user.id, 'Region deleted');
 
     await client.query(
       `UPDATE stores
