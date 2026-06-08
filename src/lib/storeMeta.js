@@ -63,7 +63,7 @@ function cleanDocumentPayload(doc) {
   if (!doc || typeof doc !== "object") return null;
   const name = String(doc.name || "").trim();
   const dataUrl = String(doc.dataUrl || "").trim();
-  if (!name || !dataUrl) return null;
+  if (!name) return null;
   const lowerName = name.toLowerCase();
   const type = String(doc.type || "").trim().toLowerCase();
   const hasAllowedExtension = ALLOWED_STORE_DOCUMENT_EXTENSIONS.some((ext) =>
@@ -78,7 +78,7 @@ function cleanDocumentPayload(doc) {
     name,
     type,
     size,
-    dataUrl,
+    ...(dataUrl ? { dataUrl } : {}),
   };
 }
 

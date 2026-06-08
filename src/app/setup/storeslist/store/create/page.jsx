@@ -125,6 +125,16 @@ function getInteriorGrandTotal(items) {
   }, 0);
 }
 
+function getApiErrorMessage(json, fallback = "Failed to create store") {
+  if (Array.isArray(json?.errors) && json.errors.length) {
+    return json.errors
+      .map((item) => item?.message || item?.field || "")
+      .filter(Boolean)
+      .join(", ");
+  }
+  return json?.message || fallback;
+}
+
 function locationFromPincodeOffice(office) {
   if (!office) return null;
   const city = String(
@@ -419,7 +429,7 @@ export default function CreateStorePage() {
         setError(
           res.status === 413
             ? "Uploaded documents are too large. Please reduce file size and try again."
-            : json.message || "Failed to create store",
+            : getApiErrorMessage(json),
         );
         return;
       }
