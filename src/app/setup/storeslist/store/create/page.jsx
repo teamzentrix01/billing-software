@@ -359,19 +359,71 @@ export default function CreateStorePage() {
       setError("Please fix the highlighted fields");
       return;
     }
+    setSavedStore({
+      name: form.name,
+      address_line1: form.addressLine1,
+      address_line2: form.addressLine2,
+      city: form.city,
+      state: form.state,
+      pincode: form.pincode,
+      country: form.country,
+      manager_name: form.managerName,
+      manager_mobile: form.managerMobile,
+      manager_email: form.managerEmail,
+      opening_time: form.openingTime,
+      closing_time: form.closingTime,
+      is_active: true,
+      meta: {
+        ...form,
+        shortCode: form.storeCode,
+        storeFormat,
+        totalStoreAmount: totalAmount,
+        interiorGrandTotal,
+      },
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleFinalSave = async () => {
+    setError("");
     setLoading(true);
     try {
+      const payload = {
+        ...form,
+        documents: Object.fromEntries(
+          Object.entries(form.documents || {}).map(([key, document]) => [
+            key,
+            document
+              ? {
+                  name: document.name,
+                  type: document.type,
+                  size: document.size,
+                }
+              : null,
+          ]),
+        ),
+      };
       const res = await fetch("/api/stores", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
-      const json = await res.json();
+      const text = await res.text();
+      let json = {};
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = {};
+      }
       if (!res.ok || !json.success) {
-        setError(json.message || "Failed to create store");
+        setError(
+          res.status === 413
+            ? "Uploaded documents are too large. Please reduce file size and try again."
+            : json.message || "Failed to create store",
+        );
         return;
       }
-      setSavedStore(json.data?.store || null);
+      router.push("/settings/stores");
     } catch (err) {
       setError(err.message || "Failed to create store");
     } finally {
@@ -403,8 +455,28 @@ export default function CreateStorePage() {
               disabled={loading}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
             >
-              {loading ? "Saving..." : "Save"}
+              Preview
             </button>
+          )}
+          {savedStore && (
+            <>
+              <button
+                type="button"
+                onClick={() => setSavedStore(null)}
+                disabled={loading}
+                className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-50 disabled:opacity-60"
+              >
+                Edit Details
+              </button>
+              <button
+                type="button"
+                onClick={handleFinalSave}
+                disabled={loading}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-60"
+              >
+                {loading ? "Saving..." : "Save Store"}
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -415,10 +487,10 @@ export default function CreateStorePage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-[15px] font-semibold text-green-700">
-                  Store saved successfully
+                  Review store details
                 </h3>
                 <p className="text-sm text-gray-500 mt-1">
-                  The store has been created and its details are shown below.
+                  Please verify all details. The store will be created only after clicking Save Store.
                 </p>
               </div>
               <div className="text-right text-xs text-gray-500">
@@ -615,16 +687,18 @@ export default function CreateStorePage() {
             <button
               type="button"
               onClick={() => setSavedStore(null)}
-              className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-50"
+              disabled={loading}
+              className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-50 disabled:opacity-60"
             >
-              Create Another
+              Edit Details
             </button>
             <button
               type="button"
-              onClick={() => router.push("/settings/stores")}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              onClick={handleFinalSave}
+              disabled={loading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-60"
             >
-              Back to Stores List
+              {loading ? "Saving..." : "Save Store"}
             </button>
           </div>
         </div>

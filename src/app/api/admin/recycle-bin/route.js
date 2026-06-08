@@ -60,7 +60,7 @@ export async function GET(request) {
               r.resource_id,
               r.display_name,
               r.deleted_by,
-              u.name AS deleted_by_name,
+              COALESCE(u.name, u.email) AS deleted_by_name,
               r.delete_reason,
               r.status,
               r.deleted_at,
@@ -72,7 +72,7 @@ export async function GET(request) {
                 FROM jsonb_object_keys(COALESCE(r.deleted_snapshot, '{}'::jsonb))
               ) AS field_count,
               COUNT(*) OVER (PARTITION BY r.operation_id) AS operation_count
-       FROM recycle_bin_items r
+      FROM recycle_bin_items r
        LEFT JOIN users u ON u.id = r.deleted_by
        ${whereSql}
        ORDER BY r.deleted_at DESC, r.id DESC
