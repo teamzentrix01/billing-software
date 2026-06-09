@@ -78,6 +78,7 @@ const EAGLE_SCALE_SERIAL_OPTIONS = {
   parity: "none",
   flowControl: "none",
 };
+const SCALE_BAUD_RATES = [9600, 4800, 2400, 19200, 38400, 115200];
 
 function signedByte(value) {
   return value > 127 ? value - 256 : value;
@@ -527,6 +528,7 @@ const STORAGE_KEYS = {
   HELD_BILLS: "pos-held-bills-v3",
   QUEUE: "pos-queue-v3",
   OFFLINE_BILLS: "pos-offline-bills-v3",
+  SCALE_BAUD_RATE: "pos-scale-baud-rate-v1",
 };
 
 function readStorage(key, fallback) {
@@ -623,6 +625,7 @@ export default function POSPage() {
   const scaleUsbLoopRef = useRef(false);
   const scaleBridgeTimerRef = useRef(null);
   const activeScaleCartKeyRef = useRef("");
+  const scaleBaudRateRef = useRef(EAGLE_SCALE_SERIAL_OPTIONS.baudRate);
 
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
@@ -681,6 +684,15 @@ export default function POSPage() {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
   };
+
+  useEffect(() => {
+    const savedBaud = Number(
+      readStorage(STORAGE_KEYS.SCALE_BAUD_RATE, EAGLE_SCALE_SERIAL_OPTIONS.baudRate),
+    );
+    if (SCALE_BAUD_RATES.includes(savedBaud)) {
+      scaleBaudRateRef.current = savedBaud;
+    }
+  }, []);
 
   const noteScaleRawData = useCallback((raw, bytes = null) => {
     const text = isUsefulScaleText(raw) ? String(raw || "").trim() : "";
@@ -807,8 +819,7 @@ export default function POSPage() {
   }, [applyScaleWeightKg, readScaleBridge]);
 
   const configureUsbSerialAdapter = useCallback(
-    async (device, interfaceNumber) => {
-      const baudRate = EAGLE_SCALE_SERIAL_OPTIONS.baudRate;
+    async (device, interfaceNumber, baudRate = EAGLE_SCALE_SERIAL_OPTIONS.baudRate) => {
       const lineCoding = new Uint8Array([
         baudRate & 0xff,
         (baudRate >> 8) & 0xff,
@@ -1025,6 +1036,7 @@ export default function POSPage() {
       await configureUsbSerialAdapter(
         device,
         selectedInterface.interfaceNumber,
+        scaleBaudRateRef.current,
       );
       if (selectedAlternate?.alternateSetting) {
         await device.selectAlternateInterface(
@@ -1044,6 +1056,11 @@ export default function POSPage() {
       const encoder = new TextEncoder();
       let buffer = "";
       let commandIndex = 0;
+      let unreadablePackets = 0;
+      let baudIndex = Math.max(
+        0,
+        SCALE_BAUD_RATES.indexOf(scaleBaudRateRef.current),
+      );
       const usbCommands = ["\r\n", "P\r\n", "W\r\n", "S\r\n", "SI\r\n"];
       pollTimer = outputEndpoint
         ? window.setInterval(() => {
@@ -1063,7 +1080,26 @@ export default function POSPage() {
         );
         if (!scaleUsbLoopRef.current) break;
         if (!result?.data) continue;
-        applyUsbScaleData(result.data);
+        const parsedPacket = applyUsbScaleData(result.data);
+        if (parsedPacket) {
+          unreadablePackets = 0;
+          writeStorage(STORAGE_KEYS.SCALE_BAUD_RATE, scaleBaudRateRef.current);
+        } else {
+          unreadablePackets += 1;
+          if (unreadablePackets >= 5 && selectedInterface) {
+            baudIndex = (baudIndex + 1) % SCALE_BAUD_RATES.length;
+            const nextBaud = SCALE_BAUD_RATES[baudIndex];
+            scaleBaudRateRef.current = nextBaud;
+            setScaleStatus(`Trying ${nextBaud} baud`);
+            await configureUsbSerialAdapter(
+              device,
+              selectedInterface.interfaceNumber,
+              nextBaud,
+            );
+            buffer = "";
+            unreadablePackets = 0;
+          }
+        }
         buffer += decoder.decode(result.data, { stream: true });
         const chunks = buffer.split(/\r?\n/);
         buffer = chunks.pop() || "";
@@ -1106,7 +1142,10 @@ export default function POSPage() {
 
     try {
       const port = await navigator.serial.requestPort();
-      await port.open(EAGLE_SCALE_SERIAL_OPTIONS);
+      await port.open({
+        ...EAGLE_SCALE_SERIAL_OPTIONS,
+        baudRate: scaleBaudRateRef.current,
+      });
       scalePortRef.current = port;
       setScaleConnected(true);
       setScaleStatus("Connected · waiting");
@@ -1136,7 +1175,9 @@ export default function POSPage() {
       }
       let buffer = "";
       const applyWeight = (raw) => {
-        return applyScaleWeightReading(raw);
+        const parsed = applyScaleWeightReading(raw);
+        if (parsed) writeStorage(STORAGE_KEYS.SCALE_BAUD_RATE, scaleBaudRateRef.current);
+        return parsed;
       };
 
       try {
@@ -2802,7 +2843,8 @@ export default function POSPage() {
               : ""}
             Press the scale PRINT key once, or set the scale data transmission
             mode to continuous / print output at 9600 baud, 8 data bits, no
-            parity, 1 stop bit.{" "}
+            parity, 1 stop bit. The POS will also auto-try common baud rates
+            for USB-RS232 converters.{" "}
             {scaleLastData ? (
               <span className="block break-all font-mono font-black">
                 Last data: {scaleLastData}

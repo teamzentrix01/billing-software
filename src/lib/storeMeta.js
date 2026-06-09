@@ -34,8 +34,8 @@ export const INTERIOR_ITEM_KEYS = [
   "sealingMachine",
   "weighingMachine",
   "palletBoard",
-  "bloombellBundle",
-  "bumbWell",
+  "broomBin",
+  "dumpBin",
   "fireExtinguisher",
   "ledBoard",
   "posMachine",
@@ -43,6 +43,21 @@ export const INTERIOR_ITEM_KEYS = [
   "billingCounter",
   "shoppingBasket",
   "cart",
+  "trackLight",
+  "oilContainer",
+  "billingRoll",
+  "stickerPrinter",
+  "stepStool",
+  "shoppingCarryBags",
+  "wifi",
+  "edcPhonepePay",
+];
+export const RACK_INTERIOR_ITEM_KEYS = [
+  "angles",
+  "shelves",
+  "brackets",
+  "plates",
+  "patti",
 ];
 
 export function classifyStoreFormat(areaSqFt) {
@@ -124,10 +139,40 @@ function cleanInteriorItems(items) {
   for (const key of INTERIOR_ITEM_KEYS) {
     const item = source[key] || {};
     const enabled = !!item.enabled;
-    const amount = enabled ? toAmount(item.amount) : 0;
     const units = enabled ? toAmount(item.units) : 0;
+    if (key === "racks") {
+      const cleanItem = { enabled, amount: 0, units, total: 0, children: {} };
+      cleanItem.children = {};
+      const children = item.children && typeof item.children === "object" ? item.children : {};
+      let childSubtotal = 0;
+      for (const childKey of RACK_INTERIOR_ITEM_KEYS) {
+        const child = children[childKey] || {};
+        const childEnabled = enabled && !!child.enabled;
+        const childAmount = childEnabled ? toAmount(child.amount) : 0;
+        const childUnits = childEnabled ? toAmount(child.units) : 0;
+        const childTotal =
+          childEnabled ? Math.round(childAmount * childUnits * 100) / 100 : 0;
+        cleanItem.children[childKey] = {
+          enabled: childEnabled,
+          amount: childAmount,
+          units: childUnits,
+          total: childTotal,
+        };
+        childSubtotal += childTotal;
+      }
+      cleanItem.amount = Math.round(childSubtotal * 100) / 100;
+      cleanItem.total =
+        enabled && cleanItem.amount > 0 && units > 0
+          ? Math.round(cleanItem.amount * units * 100) / 100
+          : 0;
+      out[key] = cleanItem;
+      grandTotal += cleanItem.total;
+      continue;
+    }
+    const amount = enabled ? toAmount(item.amount) : 0;
     const total = enabled ? Math.round(amount * units * 100) / 100 : 0;
-    out[key] = { enabled, amount, units, total };
+    const cleanItem = { enabled, amount, units, total };
+    out[key] = cleanItem;
     grandTotal += total;
   }
 

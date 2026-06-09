@@ -16,12 +16,22 @@ const INTERIOR_FIELDS = [
   { key: "ac", label: "AC" },
   { key: "refrigerator", label: "Refrigerator" },
   { key: "deepFreezer", label: "Deep Freezer" },
-  { key: "racks", label: "Racks" },
+  {
+    key: "racks",
+    label: "Racks",
+    children: [
+      { key: "angles", label: "Angles" },
+      { key: "shelves", label: "Shelves" },
+      { key: "brackets", label: "Brackets" },
+      { key: "plates", label: "Plates" },
+      { key: "patti", label: "Patti" },
+    ],
+  },
   { key: "sealingMachine", label: "Sealing Machine" },
   { key: "weighingMachine", label: "Weighing Machine" },
   { key: "palletBoard", label: "Pallet Board" },
-  { key: "bloombellBundle", label: "Bloombell Bundle" },
-  { key: "bumbWell", label: "Bumb Well" },
+  { key: "broomBin", label: "Broom Bin" },
+  { key: "dumpBin", label: "Dump Bin" },
   { key: "fireExtinguisher", label: "Fire Extinguisher" },
   { key: "ledBoard", label: "LED Board" },
   { key: "posMachine", label: "POS Machine" },
@@ -32,11 +42,39 @@ const INTERIOR_FIELDS = [
   { key: "billingCounter", label: "Billing Counter" },
   { key: "shoppingBasket", label: "Shopping Basket" },
   { key: "cart", label: "Cart" },
+  { key: "trackLight", label: "Track Light" },
+  { key: "oilContainer", label: "Oil Container" },
+  { key: "billingRoll", label: "Billing Roll" },
+  { key: "stickerPrinter", label: "Sticker Printer" },
+  { key: "stepStool", label: "Step Stool" },
+  { key: "shoppingCarryBags", label: "Shopping Bags / Carry Bags" },
+  { key: "wifi", label: "WiFi" },
+  { key: "edcPhonepePay", label: "EDC Machine / PhonePe Pay" },
 ];
 const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_DOCUMENT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
 const ALLOWED_DOCUMENT_EXTENSIONS = [".pdf", ".jpg", ".png"];
 const PINCODE_CACHE_PREFIX = "store-pincode-location:v2:";
+
+function getEmptyInteriorItem(field) {
+  return {
+    enabled: false,
+    amount: "",
+    units: "",
+    total: 0,
+    ...(field.children
+      ? {
+          children: field.children.reduce(
+            (acc, child) => ({
+              ...acc,
+              [child.key]: { enabled: false, amount: "", units: "", total: 0 },
+            }),
+            {},
+          ),
+        }
+      : {}),
+  };
+}
 
 const initialForm = {
   name: "",
@@ -66,7 +104,7 @@ const initialForm = {
   interiorItems: INTERIOR_FIELDS.reduce(
     (acc, field) => ({
       ...acc,
-      [field.key]: { enabled: false, amount: "", units: "", total: 0 },
+      [field.key]: getEmptyInteriorItem(field),
     }),
     {},
   ),
@@ -118,10 +156,25 @@ function formatMoney(value) {
   });
 }
 
+function getInteriorChildSubtotal(item) {
+  return Object.values(item?.children || {}).reduce(
+    (sum, child) => sum + (child?.enabled ? Number(child.total || 0) : 0),
+    0,
+  );
+}
+
+function getInteriorItemTotal(item) {
+  if (!item?.enabled) return 0;
+  const childSubtotal = getInteriorChildSubtotal(item);
+  if (Object.keys(item.children || {}).length) {
+    return childSubtotal * Number(item.units || 0);
+  }
+  return Number(item.total || 0);
+}
+
 function getInteriorGrandTotal(items) {
   return Object.values(items || {}).reduce((sum, item) => {
-    if (!item?.enabled) return sum;
-    return sum + Number(item.total || 0);
+    return sum + getInteriorItemTotal(item);
   }, 0);
 }
 
@@ -306,12 +359,50 @@ export default function CreateStorePage() {
     setForm((current) => {
       const previous = current.interiorItems[key] || {};
       const next = { ...previous, ...patch };
-      const amount = Number(next.amount || 0);
+      const hasChildren = Object.keys(next.children || {}).length > 0;
+      const childSubtotal = getInteriorChildSubtotal(next);
+      const amount = hasChildren ? childSubtotal : Number(next.amount || 0);
       const units = Number(next.units || 0);
       next.total = next.enabled && amount > 0 && units > 0 ? amount * units : 0;
+      if (hasChildren) next.amount = amount;
       return {
         ...current,
         interiorItems: { ...current.interiorItems, [key]: next },
+      };
+    });
+  };
+
+  const updateInteriorChildItem = (key, childKey, patch) => {
+    setForm((current) => {
+      const parent = current.interiorItems[key] || {};
+      const previousChild = parent.children?.[childKey] || {};
+      const nextChild = { ...previousChild, ...patch };
+      const amount = Number(nextChild.amount || 0);
+      const units = Number(nextChild.units || 0);
+      nextChild.total =
+        nextChild.enabled && amount > 0 && units > 0 ? amount * units : 0;
+      const nextChildren = {
+        ...(parent.children || {}),
+        [childKey]: nextChild,
+      };
+      const childSubtotal = getInteriorChildSubtotal({ children: nextChildren });
+      const parentUnits = Number(parent.units || 0);
+      return {
+        ...current,
+        interiorItems: {
+          ...current.interiorItems,
+          [key]: {
+            ...parent,
+            amount: childSubtotal,
+            total:
+              parent.enabled && childSubtotal > 0 && parentUnits > 0
+                ? childSubtotal * parentUnits
+                : 0,
+            children: {
+              ...nextChildren,
+            },
+          },
+        },
       };
     });
   };
@@ -440,6 +531,24 @@ export default function CreateStorePage() {
       setLoading(false);
     }
   };
+
+  const renderInteriorLine = (field) => (
+    <InteriorLine
+      key={field.key}
+      field={field}
+      item={form.interiorItems[field.key]}
+      onChange={(patch) => updateInteriorItem(field.key, patch)}
+      onChildChange={(childKey, patch) =>
+        updateInteriorChildItem(field.key, childKey, patch)
+      }
+    />
+  );
+  const racksInteriorField = INTERIOR_FIELDS.find((field) => field.key === "racks");
+  const regularInteriorFields = INTERIOR_FIELDS.filter(
+    (field) => field.key !== "racks",
+  );
+  const leadingInteriorFields = regularInteriorFields.slice(0, 2);
+  const remainingInteriorFields = regularInteriorFields.slice(2);
 
   return (
     <MainLayout>
@@ -987,15 +1096,18 @@ export default function CreateStorePage() {
                     Grand Total: {formatMoney(interiorGrandTotal)}
                   </span>
                 </div>
-                <div className="grid gap-3 lg:grid-cols-2">
-                  {INTERIOR_FIELDS.map((field) => (
-                    <InteriorLine
-                      key={field.key}
-                      field={field}
-                      item={form.interiorItems[field.key]}
-                      onChange={(patch) => updateInteriorItem(field.key, patch)}
-                    />
-                  ))}
+                <div className="space-y-3">
+                  <div className="grid items-start gap-3 lg:grid-cols-2">
+                    {leadingInteriorFields.map((field) =>
+                      renderInteriorLine(field),
+                    )}
+                  </div>
+                  {racksInteriorField ? renderInteriorLine(racksInteriorField) : null}
+                  <div className="grid items-start gap-3 lg:grid-cols-2">
+                    {remainingInteriorFields.map((field) =>
+                      renderInteriorLine(field),
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1332,11 +1444,14 @@ function DocumentUpload({ field, document, error, onChange }) {
   );
 }
 
-function InteriorLine({ field, item, onChange }) {
+function InteriorLine({ field, item, onChange, onChildChange }) {
   const enabled = !!item?.enabled;
+  const hasChildren = !!field.children?.length;
   const amount = item?.amount ?? "";
   const units = item?.units ?? "";
   const total = Number(item?.total || 0);
+  const childSubtotal = getInteriorChildSubtotal(item);
+  const lineTotal = hasChildren ? childSubtotal * Number(units || 0) : total;
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white px-3 py-3">
@@ -1357,15 +1472,21 @@ function InteriorLine({ field, item, onChange }) {
             <span className="mb-1 block text-xs font-medium text-gray-500">
               Amount
             </span>
-            <input
-              inputMode="decimal"
-              value={amount}
-              onChange={(e) =>
-                onChange({ amount: e.target.value.replace(/[^\d.]/g, "") })
-              }
-              className="input"
-              placeholder="0"
-            />
+            {hasChildren ? (
+              <div className="rounded-lg bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-900">
+                {formatMoney(childSubtotal)}
+              </div>
+            ) : (
+              <input
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) =>
+                  onChange({ amount: e.target.value.replace(/[^\d.]/g, "") })
+                }
+                className="input"
+                placeholder="0"
+              />
+            )}
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-gray-500">
@@ -1382,8 +1503,75 @@ function InteriorLine({ field, item, onChange }) {
             />
           </label>
           <div className="sm:col-span-2 rounded-lg bg-gray-50 px-3 py-2 text-sm font-bold text-gray-900">
-            {formatMoney(total)}
+            {formatMoney(lineTotal)}
           </div>
+          {hasChildren ? (
+            <div className="sm:col-span-2 rounded-lg border border-blue-100 bg-blue-50/50 p-3">
+              <div className="mb-2 text-xs font-bold uppercase tracking-wide text-blue-700">
+                Rack Items
+              </div>
+              <div className="space-y-2">
+                {field.children.map((child) => {
+                  const childItem = item?.children?.[child.key] || {};
+                  const childEnabled = !!childItem.enabled;
+                  const childAmount = childItem.amount ?? "";
+                  const childUnits = childItem.units ?? "";
+                  const childLineTotal = Number(childItem.total || 0);
+                  return (
+                    <div
+                      key={child.key}
+                      className="rounded-lg border border-blue-100 bg-white p-2"
+                    >
+                      <label className="flex items-center justify-between gap-3">
+                        <span className="text-xs font-semibold text-gray-800">
+                          {child.label}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={childEnabled}
+                          onChange={(event) =>
+                            onChildChange(child.key, {
+                              enabled: event.target.checked,
+                            })
+                          }
+                          className="h-4 w-4 accent-blue-600"
+                        />
+                      </label>
+                      {childEnabled ? (
+                        <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                          <input
+                            inputMode="decimal"
+                            value={childAmount}
+                            onChange={(event) =>
+                              onChildChange(child.key, {
+                                amount: event.target.value.replace(/[^\d.]/g, ""),
+                              })
+                            }
+                            className="input"
+                            placeholder="Amount"
+                          />
+                          <input
+                            inputMode="decimal"
+                            value={childUnits}
+                            onChange={(event) =>
+                              onChildChange(child.key, {
+                                units: event.target.value.replace(/[^\d.]/g, ""),
+                              })
+                            }
+                            className="input"
+                            placeholder="Units"
+                          />
+                          <div className="rounded-lg bg-gray-50 px-3 py-2 text-xs font-bold text-gray-900">
+                            {formatMoney(childLineTotal)}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
