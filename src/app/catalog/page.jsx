@@ -232,7 +232,7 @@ export default function CatalogDashboard() {
                     onChange={toggleAll}
                     className="w-4 h-4 rounded accent-blue-600 cursor-pointer"/>
                 </th>
-                {['PRODUCT','CATEGORY','PRICE','COST','MARGIN','STOCK','FLAGS'].map(h => (
+                {['PRODUCT','CATEGORY','MRP','SELLING','COST','MARGIN','STOCK','FLAGS'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-[11px] font-bold text-gray-400 tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -240,7 +240,7 @@ export default function CatalogDashboard() {
             <tbody>
               {filteredProducts.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-16 text-center text-gray-400">No products found</td>
+                  <td colSpan={9} className="py-16 text-center text-gray-400">No products found</td>
                 </tr>
               ) : filteredProducts.map((p, idx) => (
                 <tr key={p.id}
@@ -274,7 +274,10 @@ export default function CatalogDashboard() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-[13px] font-semibold text-gray-800">
-                    {p.price ? `₹${p.price}` : '—'}
+                    {p.mrp ? `₹${p.mrp}` : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-[13px] font-semibold text-red-700">
+                    {p.selling_price ? `₹${p.selling_price}` : '—'}
                   </td>
                   <td className="px-4 py-3 text-[13px] text-gray-600">
                     {p.cost ? `₹${p.cost}` : '—'}

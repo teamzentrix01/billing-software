@@ -152,11 +152,12 @@ export async function GET(request) {
       safeQuery(`
         SELECT
           p.id, p.name, p.sku, p.barcode, p.image_url,
-          p.mrp        AS price,
+          p.mrp        AS mrp,
+          p.selling_price AS selling_price,
           p.cost_price AS cost,
           CASE
-            WHEN p.cost_price > 0 AND p.mrp > 0
-            THEN ROUND(((p.mrp - p.cost_price) / p.cost_price * 100)::numeric, 0)
+            WHEN p.cost_price > 0 AND p.selling_price > 0
+            THEN ROUND(((p.selling_price - p.cost_price) / p.cost_price * 100)::numeric, 0)
             ELSE 0
           END AS margin,
           b.name AS brand,

@@ -9,7 +9,8 @@ const columns = [
   { key: "name", label: "Product Name", sortable: true },
   { key: "category", label: "Category", sortable: true },
   { key: "brand", label: "Brand", sortable: true },
-  { key: "price", label: "Price", sortable: true },
+  { key: "mrp", label: "MRP", sortable: true },
+  { key: "sellingPrice", label: "Selling Price", sortable: true },
   { key: "stock", label: "Stock", sortable: true },
 ];
 
@@ -146,7 +147,8 @@ export default function ProductsPage() {
         name: record.name,
         category: record.category_name || "—",
         brand: record.brand_name || "—",
-        price: `₹${record.selling_price ?? record.mrp ?? 0}`,
+        mrp: `₹${record.mrp ?? 0}`,
+        sellingPrice: `₹${record.selling_price ?? record.mrp ?? 0}`,
         stock: record.actual_stock ?? "—",
       })}
     />

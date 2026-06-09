@@ -2670,11 +2670,11 @@ export default function POSPage() {
                       </div>
                       <div className="text-right">
                         <p className="text-base font-black text-indigo-700">
-                          {formatCurrency(product.mrp)}
+                          Bill {formatCurrency(product.sellingPrice)}
                         </p>
                         {product.sellingPrice !== product.mrp && (
                           <p className="text-xs text-slate-500">
-                            Rate {formatCurrency(product.sellingPrice)}
+                            MRP {formatCurrency(product.mrp)}
                           </p>
                         )}
                       </div>
@@ -2912,7 +2912,7 @@ export default function POSPage() {
             {/* Product Grid */}
             <div
               className="grid flex-1 grid-cols-2 content-start gap-2 overflow-auto p-2 md:grid-cols-3 2xl:grid-cols-4"
-              style={{ maxHeight: "62vh", gridAutoRows: "118px" }}
+              style={{ maxHeight: "62vh", gridAutoRows: "126px" }}
             >
               {loading ? (
                 <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400">
@@ -2981,17 +2981,27 @@ export default function POSPage() {
                       {product.name}
                     </p>
 
-                    {/* SKU + Price row */}
-                    <div className="mt-auto grid min-h-[34px] grid-cols-[minmax(0,1fr)_auto] items-end gap-2 border-t border-slate-50 pt-1.5">
+                    {/* SKU + billing price row */}
+                    <div className="mt-auto grid min-h-[42px] grid-cols-[minmax(0,1fr)_auto] items-end gap-2 border-t border-slate-50 pt-1.5">
                       <span className="min-w-0 truncate font-mono text-[9px] leading-tight text-slate-400">
                         {product.sku || product.barcode || "-"}
                         {isWeightedUnit(product.unit)
                           ? ` · ${product.unit}`
                           : ""}
                       </span>
-                      <span className="shrink-0 whitespace-nowrap text-right text-[11px] font-black leading-tight text-rose-700 2xl:text-xs">
-                        ₹
-                        {toNumber(product.mrp).toLocaleString("en-IN")}
+                      <span className="shrink-0 whitespace-nowrap text-right leading-tight">
+                        {product.sellingPrice !== product.mrp && (
+                          <span className="block text-[9px] font-bold text-slate-400">
+                            MRP ₹
+                            {toNumber(product.mrp).toLocaleString("en-IN")}
+                          </span>
+                        )}
+                        <span className="block text-[11px] font-black text-rose-700 2xl:text-xs">
+                          Bill ₹
+                          {toNumber(product.sellingPrice).toLocaleString(
+                            "en-IN",
+                          )}
+                        </span>
                       </span>
                     </div>
                   </button>
