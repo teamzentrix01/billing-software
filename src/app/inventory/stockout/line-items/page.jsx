@@ -125,6 +125,10 @@ function LineItemsContent() {
 
       const taxRate = Number(product.tax_rate || 0);
       const cost = Number(product.cost_price || 0);
+      const mrp = Number(product.mrp || 0);
+      const sellingPrice = Number(
+        product.selling_price || product.sellingPrice || product.mrp || 0
+      );
       return [
         ...current,
         {
@@ -132,6 +136,8 @@ function LineItemsContent() {
           name: product.name,
           sku: product.sku,
           cost_price: cost,
+          mrp,
+          selling_price: sellingPrice,
           tax_value: draft?.applyTaxes ? (cost * taxRate) / 100 : 0,
           available_stock: availableStock,
           qty: 1,
@@ -349,6 +355,8 @@ function LineItemsContent() {
                       <tr className="border-b border-[#e6e6e6]">
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-[#616871]">Product</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-[#616871]">Qty</th>
+                        <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-[#616871]">MRP</th>
+                        <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-[#616871]">Selling</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-[#616871]">Cost</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-[#616871]">Tax</th>
                         <th className="w-10" />
@@ -370,6 +378,8 @@ function LineItemsContent() {
                               className="w-20 rounded-[3px] border border-[#c8ccd2] px-2 py-1 text-[13px] text-black"
                             />
                           </td>
+                          <td className="px-2 py-3 text-[13px] text-black">{formatCurrency(item.mrp)}</td>
+                          <td className="px-2 py-3 text-[13px] font-semibold text-[#B00000]">{formatCurrency(item.selling_price)}</td>
                           <td className="px-2 py-3 text-[13px] text-black">{formatCurrency(item.cost_price)}</td>
                           <td className="px-2 py-3 text-[13px] text-black">{formatCurrency(item.tax_value)}</td>
                           <td className="px-2 py-3">

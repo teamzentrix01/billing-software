@@ -400,6 +400,10 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
         );
       }
       const cost = Number(product.cost_price || 0);
+      const mrp = Number(product.mrp || 0);
+      const sellingPrice = Number(
+        product.selling_price || product.sellingPrice || product.mrp || 0
+      );
       const taxRate = Number(product.tax_rate || 0);
       const existingQty = Number(product.existingQty ?? product.availableStock ?? 0);
       return [
@@ -414,6 +418,8 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
           barcode: product.barcode,
           existing_qty: existingQty,
           cost_price: cost,
+          mrp,
+          selling_price: sellingPrice,
           tax_value: draft?.applyTaxes ? (cost * taxRate) / 100 : 0,
           qty: String(existingQty),
         },
@@ -581,7 +587,7 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                             SKU: {product.sku || '-'} · Existing: {Number(product.existingQty ?? product.availableStock ?? 0)}
                           </div>
                           <div className="text-[11px] text-gray-500">
-                            Cost: {formatCurrency(product.cost_price)}{product.batchNo || product.batch_no ? ` · Batch: ${product.batchNo || product.batch_no}` : ''}
+                            MRP: {formatCurrency(product.mrp)} · Selling: {formatCurrency(product.selling_price || product.sellingPrice || product.mrp)} · Cost: {formatCurrency(product.cost_price)}{product.batchNo || product.batch_no ? ` · Batch: ${product.batchNo || product.batch_no}` : ''}
                           </div>
                         </div>
                         <span className="text-[12px] font-medium text-blue-600">Add</span>
@@ -601,6 +607,8 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Product</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Existing</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Qty</th>
+                        <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">MRP</th>
+                        <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Selling</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Cost</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Tax</th>
                         <th className="w-10" />
@@ -644,6 +652,8 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                               </button>
                             </div>
                           </td>
+                          <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.mrp)}</td>
+                          <td className="px-2 py-3 text-[13px] font-semibold text-red-700">{formatCurrency(item.selling_price)}</td>
                           <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.cost_price)}</td>
                           <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.tax_value)}</td>
                           <td className="px-2 py-3">

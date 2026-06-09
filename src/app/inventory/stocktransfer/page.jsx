@@ -446,6 +446,10 @@ function TransferLineItemsWindow({ id, onClose, onConfirmed }) {
         );
       }
       const cost = Number(product.cost_price || 0);
+      const mrp = Number(product.mrp || 0);
+      const sellingPrice = Number(
+        product.selling_price || product.sellingPrice || product.mrp || 0
+      );
       const taxRate = Number(product.tax_rate || 0);
       return [
         ...current,
@@ -454,6 +458,8 @@ function TransferLineItemsWindow({ id, onClose, onConfirmed }) {
           name: product.name,
           sku: product.sku,
           cost_price: cost,
+          mrp,
+          selling_price: sellingPrice,
           tax_value: draft?.applyTaxes ? (cost * taxRate) / 100 : 0,
           available_stock: availableStock,
           qty: 1,
@@ -640,6 +646,8 @@ function TransferLineItemsWindow({ id, onClose, onConfirmed }) {
                       <tr className="border-b border-gray-100">
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Product</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Qty</th>
+                        <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">MRP</th>
+                        <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Selling</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Cost</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Tax</th>
                         <th className="w-10" />
@@ -661,6 +669,8 @@ function TransferLineItemsWindow({ id, onClose, onConfirmed }) {
                               className="w-20 rounded border border-gray-200 px-2 py-1 text-[13px] text-gray-700"
                             />
                           </td>
+                          <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.mrp)}</td>
+                          <td className="px-2 py-3 text-[13px] font-semibold text-red-700">{formatCurrency(item.selling_price)}</td>
                           <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.cost_price)}</td>
                           <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.tax_value)}</td>
                           <td className="px-2 py-3">
