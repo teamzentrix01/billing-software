@@ -2629,11 +2629,13 @@ export default function POSPage() {
                       </div>
                       <div className="text-right">
                         <p className="text-base font-black text-indigo-700">
-                          {formatCurrency(product.sellingPrice)}
+                          {formatCurrency(product.mrp)}
                         </p>
-                        <p className="text-xs text-slate-500">
-                          MRP {formatCurrency(product.mrp)}
-                        </p>
+                        {product.sellingPrice !== product.mrp && (
+                          <p className="text-xs text-slate-500">
+                            Rate {formatCurrency(product.sellingPrice)}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </button>
@@ -2947,7 +2949,7 @@ export default function POSPage() {
                       </span>
                       <span className="shrink-0 whitespace-nowrap text-right text-[11px] font-black leading-tight text-rose-700 2xl:text-xs">
                         ₹
-                        {toNumber(product.sellingPrice).toLocaleString("en-IN")}
+                        {toNumber(product.mrp).toLocaleString("en-IN")}
                       </span>
                     </div>
                   </button>

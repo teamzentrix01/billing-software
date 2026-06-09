@@ -149,8 +149,8 @@ export default function MasterDashboardPage() {
                 style={{ color: '#ffffff', WebkitTextFillColor: '#ffffff' }}
               >
                 <option value="all" className="text-slate-900 bg-white">All Stores</option>
-                {stores.map(store => (
-                  <option key={store.id} value={store.id} className="text-slate-900 bg-white">{store.name}</option>
+                {stores.map((store, idx) => (
+                  <option key={store.id ?? `store-${idx}`} value={store.id} className="text-slate-900 bg-white">{store.name}</option>
                 ))}
               </select>
               <div className="flex items-center gap-2 bg-emerald-500/15 border border-emerald-400/25 rounded-xl px-3 py-2">
@@ -264,8 +264,8 @@ export default function MasterDashboardPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {data.top_vendors.map((vendor) => (
-                        <tr key={`${vendor.id}-${vendor.vendor_name}`} className="border-b border-slate-50 hover:bg-indigo-50/40 transition-colors">
+                      {data.top_vendors.map((vendor, idx) => (
+                        <tr key={`vendor-${idx}-${vendor.id ?? vendor.vendor_name ?? 'na'}`} className="border-b border-slate-50 hover:bg-indigo-50/40 transition-colors">
                           <td className="py-2 text-xs font-semibold text-slate-800">{vendor.vendor_name}</td>
                           <td className="py-2 text-right text-xs font-black text-slate-700">{vendor.purchase_count || 0}</td>
                           <td className="py-2 text-right text-xs font-semibold text-slate-600">{Number(vendor.items || 0).toLocaleString('en-IN')}</td>
@@ -349,7 +349,7 @@ export default function MasterDashboardPage() {
                   </thead>
                   <tbody>
                     {data.top_customers?.slice(0, 10).map((customer, idx) => (
-                      <tr key={customer.id} className="border-b border-slate-50 hover:bg-indigo-50/40 transition-colors group">
+                      <tr key={`customer-${idx}-${customer.id ?? customer.phone ?? customer.name ?? 'walkin'}`} className="border-b border-slate-50 hover:bg-indigo-50/40 transition-colors group">
                         <td className="py-2 pr-2">
                           <span className="text-[10px] font-black text-slate-300 tabular-nums">{idx + 1}</span>
                         </td>
@@ -424,8 +424,8 @@ export default function MasterDashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {staffWindow.map(staff => (
-                      <tr key={staff.id} className="border-b border-slate-50 hover:bg-indigo-50/30 transition-colors">
+                    {staffWindow.map((staff, idx) => (
+                      <tr key={`staff-${idx}-${staff.id ?? staff.name ?? 'na'}`} className="border-b border-slate-50 hover:bg-indigo-50/30 transition-colors">
                         <td className="px-3 py-2 text-xs font-bold text-slate-800">{staff.name}</td>
                         <td className="px-3 py-2 text-right text-xs font-black text-slate-700">{staff.bills_created}</td>
                         <td className="px-3 py-2 text-right text-xs font-black text-indigo-600">₹{parseFloat(staff.sales_value).toFixed(0)}</td>
@@ -473,8 +473,8 @@ export default function MasterDashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.stock_alerts.map(item => (
-                      <tr key={item.id} className={`border-b border-slate-50 transition-colors ${
+                    {data.stock_alerts.map((item, idx) => (
+                      <tr key={`alert-${idx}-${item.id ?? item.sku ?? 'na'}`} className={`border-b border-slate-50 transition-colors ${
                         item.stock_status === 'Out of Stock' ? 'hover:bg-red-50/40' : 'hover:bg-amber-50/40'
                       }`}>
                         <td className="py-2.5 text-xs font-semibold text-slate-800">{item.name}</td>
@@ -519,8 +519,8 @@ export default function MasterDashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.moving_items.slice(0, 20).map(item => (
-                      <tr key={item.id} className="border-b border-slate-50 hover:bg-slate-50/60 transition-colors">
+                    {data.moving_items.slice(0, 20).map((item, idx) => (
+                      <tr key={`moving-${idx}-${item.id ?? item.sku ?? 'na'}`} className="border-b border-slate-50 hover:bg-slate-50/60 transition-colors">
                         <td className="py-2.5 text-xs font-semibold text-slate-800">{item.name}</td>
                         <td className="py-2.5 text-[10px] font-mono font-semibold text-indigo-500">{item.sku}</td>
                         <td className="py-2.5 text-right text-xs font-bold text-slate-700">{item.quantity_sold}</td>
