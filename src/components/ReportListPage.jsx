@@ -1,16 +1,187 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import MainLayout from '@/components/MainLayout';
 
 const PAGE_SIZES = [10, 25, 50, 100];
 const EMPTY_ARRAY = [];
+const MONTHS = {
+  jan: '01',
+  january: '01',
+  feb: '02',
+  february: '02',
+  mar: '03',
+  march: '03',
+  apr: '04',
+  april: '04',
+  may: '05',
+  jun: '06',
+  june: '06',
+  jul: '07',
+  july: '07',
+  aug: '08',
+  august: '08',
+  sep: '09',
+  sept: '09',
+  september: '09',
+  oct: '10',
+  october: '10',
+  nov: '11',
+  november: '11',
+  dec: '12',
+  december: '12',
+};
 
 function optionListsEqual(a = [], b = []) {
   if (a.length !== b.length) return false;
   return a.every((item, index) => item.value === b[index]?.value && item.label === b[index]?.label);
+}
+
+function getTodayInputValue() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateInputValue(value) {
+  if (!value) return '';
+  const text = String(value).trim();
+  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) return text;
+
+  const displayMatch = text.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})$/);
+  if (displayMatch) {
+    const month = MONTHS[displayMatch[2].toLowerCase()];
+    if (month) return `${displayMatch[3]}-${month}-${displayMatch[1].padStart(2, '0')}`;
+  }
+
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) {
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  return '';
+}
+
+function parseDateRangeInput(value) {
+  const today = getTodayInputValue();
+  if (!value) return { from: today, to: today };
+
+  const parts = String(value).split(/\s+-\s+/);
+  const from = parseDateInputValue(parts[0]) || today;
+  const to = parseDateInputValue(parts[1] || parts[0]) || from;
+  return from <= to ? { from, to } : { from: to, to: from };
+}
+
+function formatDateForReport(value) {
+  const [year, month, day] = String(value || '').split('-').map(Number);
+  if (!year || !month || !day) return '';
+  return new Date(year, month - 1, day).toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function formatDateRangeForReport(from, to) {
+  const safeFrom = parseDateInputValue(from) || getTodayInputValue();
+  const safeTo = parseDateInputValue(to) || safeFrom;
+  const ordered = safeFrom <= safeTo ? [safeFrom, safeTo] : [safeTo, safeFrom];
+  return `${formatDateForReport(ordered[0])} - ${formatDateForReport(ordered[1])}`;
+}
+
+function DateRangeFilter({ value, onChange }) {
+  const wrapperRef = useRef(null);
+  const fromInputRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const range = useMemo(() => parseDateRangeInput(value), [value]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const timer = window.setTimeout(() => {
+      fromInputRef.current?.focus();
+      try {
+        fromInputRef.current?.showPicker?.();
+      } catch {
+        // Some browsers only allow showPicker during the original click gesture.
+      }
+    }, 0);
+
+    const onPointerDown = (event) => {
+      if (!wrapperRef.current?.contains(event.target)) setOpen(false);
+    };
+
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [open]);
+
+  const updateRange = (nextPart) => {
+    const nextFrom = nextPart.from || range.from;
+    const nextTo = nextPart.to || range.to;
+    onChange(formatDateRangeForReport(nextFrom, nextTo));
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+      >
+        <span className="min-w-0 truncate">{value || formatDateRangeForReport(range.from, range.to)}</span>
+        <svg className="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <rect x="3" y="4" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.4" />
+          <path d="M3 8h14M7 2v3M13 2v3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-2 w-full min-w-[18rem] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl shadow-slate-900/10">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium text-slate-500">From</span>
+              <input
+                ref={fromInputRef}
+                type="date"
+                value={range.from}
+                onChange={(event) => updateRange({ from: event.target.value })}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium text-slate-500">To</span>
+              <input
+                type="date"
+                value={range.to}
+                onChange={(event) => updateRange({ to: event.target.value })}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+              />
+            </label>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -266,20 +437,10 @@ export default function ReportsListPage({
                   <label className="mb-1 block text-xs font-medium text-slate-600">{f.label}</label>
 
                   {(f.type === 'date-range' || f.type === 'daterange') && (
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={filterValues[f.key]}
-                        onChange={(e) => set(f.key, e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 pr-9 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400"
-                      />
-                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">
-                        <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none">
-                          <rect x="3" y="4" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.4"/>
-                          <path d="M3 8h14M7 2v3M13 2v3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
-                        </svg>
-                      </span>
-                    </div>
+                    <DateRangeFilter
+                      value={filterValues[f.key]}
+                      onChange={(value) => set(f.key, value)}
+                    />
                   )}
 
                   {f.type === 'select' && (
