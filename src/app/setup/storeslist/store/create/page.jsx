@@ -51,7 +51,7 @@ const INTERIOR_FIELDS = [
   { key: "wifi", label: "WiFi" },
   { key: "edcPhonepePay", label: "EDC Machine / PhonePe Pay" },
 ];
-const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
+const MAX_DOCUMENT_BYTES = 15 * 1024 * 1024;
 const DOCUMENT_UPLOAD_CHUNK_CHARS = 200_000;
 const ALLOWED_DOCUMENT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
 const ALLOWED_DOCUMENT_EXTENSIONS = [".pdf", ".jpg", ".png"];
@@ -323,7 +323,7 @@ export default function CreateStorePage() {
     if (file.size > MAX_DOCUMENT_BYTES) {
       setErrors((p) => ({
         ...p,
-        [`documents.${key}`]: "File must be 5 MB or smaller",
+        [`documents.${key}`]: "File must be 15 MB or smaller",
       }));
       return;
     }
@@ -1460,7 +1460,7 @@ function DocumentUpload({ field, document, error, onChange }) {
         </div>
       ) : null}
       <span className="mt-2 block text-xs text-gray-500">
-        Upload format: JPG/PNG/PDF. Max size: 5 MB.
+        Upload format: JPG/PNG/PDF. Max size: 15 MB.
       </span>
       {error ? (
         <span className="mt-1 block text-xs font-medium text-red-600">

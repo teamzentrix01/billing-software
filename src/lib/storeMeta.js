@@ -25,7 +25,7 @@ export const ALLOWED_STORE_DOCUMENT_TYPES = [
   "image/png",
 ];
 export const ALLOWED_STORE_DOCUMENT_EXTENSIONS = [".pdf", ".jpg", ".png"];
-export const MAX_STORE_DOCUMENT_BYTES = 5 * 1024 * 1024;
+export const MAX_STORE_DOCUMENT_BYTES = 15 * 1024 * 1024;
 export const INTERIOR_ITEM_KEYS = [
   "ac",
   "refrigerator",

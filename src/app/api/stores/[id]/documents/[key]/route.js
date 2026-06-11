@@ -58,6 +58,16 @@ function cleanDocumentPayload(doc) {
   };
 }
 
+function documentSummary(document) {
+  if (!document) return null;
+  return {
+    name: document.name || "",
+    type: document.type || "",
+    size: Number(document.size || 0),
+    hasPreview: Boolean(document.dataUrl),
+  };
+}
+
 async function getDocumentFromRequest(request) {
   const contentType = request.headers.get("content-type") || "";
 
@@ -131,7 +141,7 @@ async function saveDocument(storeId, key, document) {
     `UPDATE stores
      SET meta = $1, updated_at = NOW()
      WHERE id = $2
-     RETURNING id, meta, updated_at`,
+     RETURNING id, updated_at`,
     [JSON.stringify(nextMeta), storeId],
   );
 
@@ -233,7 +243,10 @@ export async function POST(request, { params }) {
         [storeId, key, uploadId],
       );
 
-      return successResponse({ store }, "Document uploaded");
+      return successResponse(
+        { store, document: documentSummary(document) },
+        "Document uploaded",
+      );
     }
 
     return errorResponse("Invalid upload action", 400);
@@ -279,7 +292,10 @@ export async function PUT(request, { params }) {
     const store = await saveDocument(storeId, key, document);
     if (!store) return errorResponse("Store not found", 404);
 
-    return successResponse({ store }, "Document uploaded");
+    return successResponse(
+      { store, document: documentSummary(document) },
+      "Document uploaded",
+    );
   } catch (err) {
     console.error("[store document PUT]", err);
     return errorResponse(err.message || "Unable to upload store document");
