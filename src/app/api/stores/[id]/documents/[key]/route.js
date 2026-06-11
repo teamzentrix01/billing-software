@@ -35,6 +35,34 @@ function cleanDocumentPayload(doc) {
   };
 }
 
+async function getDocumentFromRequest(request) {
+  const contentType = request.headers.get("content-type") || "";
+
+  if (contentType.includes("multipart/form-data")) {
+    const form = await request.formData();
+    const file = form.get("file");
+    if (!file || typeof file !== "object" || typeof file.arrayBuffer !== "function") {
+      return null;
+    }
+
+    const name = String(form.get("name") || file.name || "").trim();
+    const type = String(form.get("type") || file.type || "").trim();
+    const size = Number(form.get("size") || file.size || 0);
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const dataUrl = `data:${type || "application/octet-stream"};base64,${buffer.toString("base64")}`;
+
+    return cleanDocumentPayload({
+      name,
+      type,
+      size,
+      dataUrl,
+    });
+  }
+
+  const body = await request.json().catch(() => ({}));
+  return cleanDocumentPayload(body.document);
+}
+
 export async function PUT(request, { params }) {
   try {
     await ensureStoresSchema();
@@ -56,8 +84,7 @@ export async function PUT(request, { params }) {
     const storeCheck = requireStore(auth.user, storeId);
     if (storeCheck.error) return storeCheck.error;
 
-    const body = await request.json().catch(() => ({}));
-    const document = cleanDocumentPayload(body.document);
+    const document = await getDocumentFromRequest(request);
     if (!document) return errorResponse("Invalid document payload", 422);
 
     const existing = await query("SELECT meta FROM stores WHERE id = $1 LIMIT 1", [storeId]);

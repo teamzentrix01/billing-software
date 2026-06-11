@@ -133,6 +133,7 @@ async function fileToDocument(file) {
         name: file.name,
         type: file.type,
         size: file.size,
+        file,
         dataUrl: String(reader.result || ""),
       });
     reader.onerror = () => reject(new Error("Failed to read file"));
@@ -142,11 +143,28 @@ async function fileToDocument(file) {
 
 async function uploadStoreDocument(storeId, key, document) {
   if (!document) return;
+  const body = new FormData();
+  if (document.file) {
+    body.append("file", document.file, document.name);
+    body.append("name", document.name || document.file.name || key);
+    body.append("type", document.type || document.file.type || "");
+    body.append("size", String(document.size || document.file.size || 0));
+  } else {
+    body.append(
+      "file",
+      new Blob([document.dataUrl || ""], {
+        type: "text/plain",
+      }),
+      document.name || key,
+    );
+    body.append("name", document.name || key);
+    body.append("type", document.type || "");
+    body.append("size", String(document.size || 0));
+  }
   const res = await fetch(`/api/stores/${storeId}/documents/${key}`, {
     method: "PUT",
     cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ document }),
+    body,
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || !json.success) {
