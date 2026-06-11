@@ -1,4 +1,4 @@
-const CACHE_NAME = 'buyzaar-sync-shell-v3';
+const CACHE_NAME = 'buyzaar-sync-shell-v4';
 const APP_SHELL = [
   '/',
   '/login',
@@ -51,6 +51,16 @@ self.addEventListener('fetch', (event) => {
 
   if (url.origin !== self.location.origin) {
     event.respondWith(fetch(request));
+    return;
+  }
+
+  if (url.pathname.startsWith('/_next/')) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
+  if (request.mode === 'navigate') {
+    event.respondWith(fetch(request).catch(() => caches.match('/sales/pos')));
     return;
   }
 

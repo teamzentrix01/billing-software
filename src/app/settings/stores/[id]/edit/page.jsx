@@ -144,6 +144,7 @@ async function uploadStoreDocument(storeId, key, document) {
   if (!document) return;
   const res = await fetch(`/api/stores/${storeId}/documents/${key}`, {
     method: "PUT",
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ document }),
   });
@@ -385,11 +386,11 @@ export default function EditStorePage() {
     setSaving(true);
 
     try {
-      const payload = { ...form };
-      delete payload.documents;
+      const { documents: _documents, ...payload } = form;
 
       const res = await fetch(`/api/stores/${params.id}`, {
         method: "PUT",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });

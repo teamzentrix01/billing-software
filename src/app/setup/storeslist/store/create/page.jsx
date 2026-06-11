@@ -192,6 +192,7 @@ async function uploadStoreDocument(storeId, key, document) {
   if (!document) return;
   const res = await fetch(`/api/stores/${storeId}/documents/${key}`, {
     method: "PUT",
+    cache: "no-store",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ document }),
   });
@@ -519,6 +520,7 @@ export default function CreateStorePage() {
       };
       const res = await fetch("/api/stores", {
         method: "POST",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
