@@ -5,6 +5,73 @@ import { useSearchParams, useRouter } from "next/navigation";
 import MainLayout from "@/components/MainLayout";
 import { formatIndianDate } from "@/lib/dateUtils";
 
+function VendorMultiSelect({ vendors, value, onChange, query, onQueryChange }) {
+  const filteredVendors = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return vendors;
+    return vendors.filter((vendor) =>
+      `${vendor.name || ""} ${vendor.company || ""}`.toLowerCase().includes(q),
+    );
+  }, [vendors, query]);
+
+  const toggleVendor = (vendorId) => {
+    const id = String(vendorId);
+    onChange(
+      value.includes(id) ? value.filter((item) => item !== id) : [...value, id],
+    );
+  };
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white">
+      <div className="border-b border-gray-100 px-3 py-2">
+        <input
+          type="text"
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          placeholder="Search vendor..."
+          className="w-full bg-transparent text-[12px] text-gray-700 outline-none placeholder:text-gray-400"
+        />
+      </div>
+      <div className="max-h-36 overflow-auto p-1.5">
+        {filteredVendors.length === 0 ? (
+          <p className="px-2 py-3 text-[12px] text-gray-400">No vendors found</p>
+        ) : (
+          filteredVendors.map((vendor) => {
+            const id = String(vendor.id);
+            const checked = value.includes(id);
+            return (
+              <label
+                key={vendor.id}
+                className={`flex cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-[12px] transition-colors ${
+                  checked ? "bg-blue-50 text-blue-900" : "text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleVendor(vendor.id)}
+                  className="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="min-w-0 flex-1 leading-snug">
+                  <span className="block font-semibold">{vendor.name}</span>
+                  {vendor.company ? (
+                    <span className="block text-[11px] text-gray-500">{vendor.company}</span>
+                  ) : null}
+                </span>
+              </label>
+            );
+          })
+        )}
+      </div>
+      {value.length > 0 ? (
+        <div className="border-t border-gray-100 px-3 py-2 text-[11px] font-medium text-gray-500">
+          {value.length} vendor{value.length === 1 ? "" : "s"} selected
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function formatCurrency(n) {
   return Number(n || 0).toLocaleString("en-IN", {
     minimumFractionDigits: 2,
@@ -68,6 +135,7 @@ function LineItemsContent() {
   const [loadingBrandProducts, setLoadingBrandProducts] = useState(false);
   const [selectedBrandProducts, setSelectedBrandProducts] = useState({});
   const [vendors, setVendors] = useState([]);
+  const [vendorQuery, setVendorQuery] = useState("");
   const [selectedVendorIds, setSelectedVendorIds] = useState([]);
   const [cart, setCart] = useState([]);
   const [form, setForm] = useState({
@@ -197,11 +265,7 @@ function LineItemsContent() {
     sku: product.sku || product.barcode || product.product_id || "",
     barcode: product.barcode || "",
     cost_price: Number(
-      product.cost_price ??
-        product.costPrice ??
-        product.selling_price ??
-        product.mrp ??
-        0,
+      product.cost_price ?? product.costPrice ?? 0,
     ),
     mrp: Number(product.mrp || 0),
     selling_price: Number(product.selling_price || 0),
@@ -244,8 +308,22 @@ function LineItemsContent() {
   };
 
   useEffect(() => {
+    if (!draft) {
+      setProducts([]);
+      setLoadingProducts(false);
+      return;
+    }
+
     const query = searchTerm.trim();
-    if (!query || !draft) {
+    const isVendorSource = sourceType === "vendor";
+
+    if (isVendorSource && selectedVendorIds.length === 0) {
+      setProducts([]);
+      setLoadingProducts(false);
+      return;
+    }
+
+    if (!isVendorSource && !query) {
       setProducts([]);
       setLoadingProducts(false);
       return;
@@ -253,8 +331,13 @@ function LineItemsContent() {
 
     const controller = new AbortController();
     setLoadingProducts(true);
+    const delay = query ? 250 : 0;
     const t = setTimeout(() => {
-      loadSourceProducts({ searchValue: query, signal: controller.signal })
+      loadSourceProducts({
+        searchValue: query,
+        pageSize: isVendorSource && !query ? 100 : 30,
+        signal: controller.signal,
+      })
         .then(setProducts)
         .catch((error) => {
           if (error?.name !== "AbortError") setProducts([]);
@@ -262,13 +345,13 @@ function LineItemsContent() {
         .finally(() => {
           if (!controller.signal.aborted) setLoadingProducts(false);
         });
-    }, 250);
+    }, delay);
 
     return () => {
       controller.abort();
       clearTimeout(t);
     };
-  }, [searchTerm, draft, selectedVendorIds]);
+  }, [searchTerm, draft, selectedVendorIds, sourceType]);
 
   useEffect(() => {
     if (!showBrandPicker) return;
@@ -421,7 +504,9 @@ function LineItemsContent() {
       ];
     });
     setSearchTerm("");
-    setProducts([]);
+    if (sourceType !== "vendor") {
+      setProducts([]);
+    }
   };
 
   const closeBrandPicker = () => {
@@ -766,28 +851,19 @@ function LineItemsContent() {
                 Vendor Name
               </label>
               {sourceType === "vendor" ? (
-                <select
-                  multiple
+                <VendorMultiSelect
+                  vendors={vendors}
                   value={selectedVendorIds}
-                  onChange={(e) => {
-                    const ids = Array.from(e.target.selectedOptions).map(
-                      (option) => option.value,
-                    );
+                  onChange={(ids) => {
                     setSelectedVendorIds(ids);
                     const names = vendors
                       .filter((vendor) => ids.includes(String(vendor.id)))
                       .map((vendor) => vendor.name);
                     setForm({ ...form, vendor: names.join(", ") });
                   }}
-                  className="h-28 w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] text-gray-700 bg-white outline-none focus:border-blue-400"
-                >
-                  {vendors.map((vendor) => (
-                    <option key={vendor.id} value={String(vendor.id)}>
-                      {vendor.name}
-                      {vendor.company ? ` - ${vendor.company}` : ""}
-                    </option>
-                  ))}
-                </select>
+                  query={vendorQuery}
+                  onQueryChange={setVendorQuery}
+                />
               ) : (
                 <div className="relative">
                   <input
@@ -909,44 +985,85 @@ function LineItemsContent() {
               </div>
 
               <div className="flex-1 p-4 overflow-auto">
-                {products.length > 0 && (
-                  <div className="mb-4 border border-gray-100 rounded-lg divide-y divide-gray-100">
-                    {products.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => addToCart(p)}
-                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-blue-50/60 transition-colors"
-                      >
-                        <div>
-                          <div className="text-[13px] font-medium text-gray-900">
-                            {p.name}
-                          </div>
-                          {sourceType === "warehouse" && isStoreDestination && (
-                            <div className="text-[11px] text-emerald-600 mt-0.5">
-                              Warehouse qty: {Number(p.availableStock || 0)}
-                            </div>
-                          )}
-                          {sourceType === "vendor" && p.vendor_names && (
-                            <div className="text-[11px] text-blue-600 mt-0.5">
-                              Vendor: {p.vendor_names}
-                            </div>
-                          )}
-                          <div className="text-[12px] text-gray-500">
-                            SKU: {getProductSku(p) || "—"}
-                          </div>
-                        </div>
-                        <span className="text-[12px] font-medium text-blue-600">
-                          Add
-                        </span>
-                      </button>
-                    ))}
+                {sourceType === "vendor" && selectedVendorIds.length === 0 && (
+                  <div className="mb-4 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center">
+                    <p className="text-[13px] font-medium text-gray-700">
+                      Select vendor(s) to view products
+                    </p>
+                    <p className="mt-1 text-[12px] text-gray-500">
+                      Products from the selected vendors will appear here for quick selection.
+                    </p>
                   </div>
                 )}
 
-                {searchTerm.trim() &&
-                  !loadingProducts &&
-                  products.length === 0 && (
+                {loadingProducts &&
+                (searchTerm.trim() ||
+                  (sourceType === "vendor" && selectedVendorIds.length > 0)) ? (
+                  <div className="mb-4 rounded-lg border border-gray-100 bg-gray-50 px-4 py-6 text-center text-[13px] text-gray-500">
+                    Loading products...
+                  </div>
+                ) : null}
+
+                {products.length > 0 && (
+                  <div className="mb-4 overflow-hidden rounded-lg border border-gray-100">
+                    <div className="border-b border-gray-100 bg-gray-50 px-4 py-2">
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">
+                        Available Products ({products.length})
+                      </p>
+                    </div>
+                    <div className="divide-y divide-gray-100">
+                      {products.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => addToCart(p)}
+                          className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition-colors hover:bg-blue-50/60"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-[13px] font-medium text-gray-900">
+                              {p.name}
+                            </div>
+                            {sourceType === "warehouse" && isStoreDestination && (
+                              <div className="mt-0.5 text-[11px] text-emerald-600">
+                                Warehouse qty: {Number(p.availableStock || 0)}
+                              </div>
+                            )}
+                            {sourceType === "vendor" && p.vendor_names && (
+                              <div className="mt-0.5 text-[11px] text-blue-600">
+                                Vendor: {p.vendor_names}
+                              </div>
+                            )}
+                            {(p.brandName || p.brand_name) && (
+                              <div className="mt-0.5 text-[11px] text-gray-500">
+                                Brand: {p.brandName || p.brand_name}
+                              </div>
+                            )}
+                            <div className="text-[12px] text-gray-500">
+                              SKU: {getProductSku(p) || "—"}
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <div className="text-[13px] font-black text-rose-700">
+                              ₹{formatUnitPrice(p.mrp)}
+                            </div>
+                            <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-600">
+                              MRP
+                            </div>
+                            <div className="mt-1 text-[11px] font-semibold text-blue-700">
+                              + Add
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {!loadingProducts &&
+                  ((searchTerm.trim() && products.length === 0) ||
+                    (sourceType === "vendor" &&
+                      selectedVendorIds.length > 0 &&
+                      products.length === 0)) && (
                     <div className="py-8 text-center">
                       <p className="text-[13px] text-gray-500">
                         No products found
@@ -1120,6 +1237,11 @@ function LineItemsContent() {
                               <div className="text-[11px] text-gray-500">
                                 {it.sku}
                               </div>
+                              {Number(it.mrp || 0) > 0 ? (
+                                <div className="text-[11px] font-medium text-rose-700">
+                                  MRP: ₹{formatUnitPrice(it.mrp)}
+                                </div>
+                              ) : null}
                             </td>
                             <td className="py-3 px-2">
                               <input
@@ -1254,8 +1376,8 @@ function LineItemsContent() {
                                 {product.name}
                               </div>
                               <div className="text-[12px] text-gray-500">
-                                SKU: {getProductSku(product) || "-"} · Stock:{" "}
-                                {Number(product.availableStock || 0)}
+                                SKU: {getProductSku(product) || "-"} · MRP: ₹
+                                {formatUnitPrice(product.mrp)}
                               </div>
                             </div>
                             <button
