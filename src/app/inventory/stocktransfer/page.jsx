@@ -3,7 +3,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import InventoryShell from '@/components/inventory/InventoryShell';
 import { getBulkField, parseBulkSheet, pickSpreadsheetFile, toBoolean } from '@/lib/bulkSheet';
-import { formatIndianDate } from '@/lib/dateUtils';
+import { formatIndianDate, toDateInputValue } from '@/lib/dateUtils';
+import {
+  addOptionNamedRanges,
+  applyTextFormatToColumns,
+  buildOptionsSheet,
+  hideOptionsSheet,
+  optionFormula,
+  saveWorkbookWithValidations,
+  sortOptions,
+  uniqueOptions,
+} from '@/lib/xlsxDropdowns';
 
 async function fetchStores() {
   const res = await fetch('/api/stores');
@@ -42,6 +52,26 @@ async function postTransfer(payload) {
   return data;
 }
 
+async function confirmTransfer(id, payload) {
+  const res = await fetch(`/api/inventory/stocktransfer/${encodeURIComponent(id)}/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to confirm stock transfer');
+  return data;
+}
+
+async function revertTransfer(id) {
+  const res = await fetch(`/api/inventory/stocktransfer/${encodeURIComponent(id)}/revert`, {
+    method: 'POST',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to revert stock transfer');
+  return data;
+}
+
 const tableHeaders = [
   'Transaction ID',
   'Invoice Number',
@@ -70,6 +100,7 @@ function formatCurrency(value) {
 
 function mapTransfersToTable(records) {
   return (records || []).map((row) => ({
+    _id: row.id,
     'Transaction ID': row.transactionId ? `#${row.transactionId}` : `#TRN-${row.id}`,
     'Invoice Number': row.invoiceNumber || '-',
     'Source Name': row.sourceName || '-',
@@ -79,7 +110,83 @@ function mapTransfersToTable(records) {
     Cost: formatCost(row.cost),
     _invoiceDate: row.invoiceDate || '',
     _source: row.sourceName || '',
+    _revertedAt: row.revertedAt || '',
   }));
+}
+
+function getLocationType(location) {
+  return String(location?.meta?.locationType || 'Store').trim() || 'Store';
+}
+
+function getLocationOption(location) {
+  return `${location.id} - ${location.name} (${getLocationType(location)})`;
+}
+
+function normalizeCompare(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function resolveLocationId(value, locations) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const leadingId = raw.match(/^\d+/)?.[0];
+  if (leadingId && locations.some((location) => String(location.id) === leadingId)) {
+    return leadingId;
+  }
+  const exact = locations.find(
+    (location) =>
+      normalizeCompare(location.name) === normalizeCompare(raw) ||
+      normalizeCompare(getLocationOption(location)) === normalizeCompare(raw),
+  );
+  return exact ? String(exact.id) : raw;
+}
+
+function toNumber(value, fallback = 0) {
+  const parsed = Number(String(value ?? '').replace(/,/g, '').trim());
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getNumericId(value) {
+  const raw = String(value ?? '').trim();
+  const leading = raw.match(/^\d+/)?.[0];
+  return leading || raw;
+}
+
+function getBatchId(product) {
+  const direct = product?.batchId ?? product?.batch_id;
+  if (direct) return String(direct).match(/\d+/g)?.pop() || direct;
+  const composite = String(product?.id ?? product?.product_id ?? '').trim();
+  const parts = composite.match(/\d+/g) || [];
+  return parts.length > 1 ? parts[parts.length - 1] : null;
+}
+
+function getRowDate(value) {
+  if (!value) return '';
+  return toDateInputValue(value) || String(value).trim();
+}
+
+function buildTransferGroupKey(row) {
+  return [
+    row.sourceId,
+    row.destinationId,
+    row.invoiceDate,
+    row.invoiceNumber,
+    row.otherCharges,
+    row.remarks,
+    row.applyTaxes ? 'tax' : 'no-tax',
+  ].join('|');
+}
+
+function findExactProduct(records, { barcode, sku, productName }) {
+  const cleanBarcode = normalizeCompare(barcode);
+  const cleanSku = normalizeCompare(sku);
+  const cleanName = normalizeCompare(productName);
+  return (
+    records.find((product) => cleanBarcode && normalizeCompare(product.barcode) === cleanBarcode) ||
+    records.find((product) => cleanSku && normalizeCompare(product.sku) === cleanSku) ||
+    records.find((product) => cleanName && normalizeCompare(product.name) === cleanName) ||
+    null
+  );
 }
 
 export default function StockTransferPage() {
@@ -94,6 +201,9 @@ export default function StockTransferPage() {
   const [tableData, setTableData] = useState([]);
   const [draftId, setDraftId] = useState(null);
   const [listFilters, setListFilters] = useState({ dateFrom: '', dateTo: '', source: '' });
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [pendingRevert, setPendingRevert] = useState(null);
+  const [revertingId, setRevertingId] = useState(null);
 
   const visibleTableData = useMemo(() => {
     return tableData.filter((row) => {
@@ -138,8 +248,111 @@ export default function StockTransferPage() {
     setShowModal(true);
   };
 
-  const handleBulkImport = async () => {
+  const loadLocations = async () => {
+    const data = await fetchStores();
+    const locations = Array.isArray(data) ? data : [];
+    setStores(locations);
+    return locations;
+  };
+
+  const handleDownloadBulkTemplate = async () => {
+    setBulkBusy(true);
     try {
+      const XLSX = await import('xlsx');
+      const locations = stores.length ? stores : await loadLocations();
+      const locationOptions = sortOptions(uniqueOptions(locations.map(getLocationOption)));
+      const yesNoOptions = ['Yes', 'No'];
+      const headers = [
+        'Source',
+        'Destination',
+        'Barcode',
+        'SKU',
+        'Product Name',
+        'Quantity',
+        'MRP On Destination',
+        'Selling Price On Destination',
+        'Cost/Unit',
+        'Invoice Date',
+        'Invoice Number',
+        'Other Charges',
+        'Remarks',
+        'Apply Taxes',
+      ];
+      const rows = [headers];
+
+      const worksheet = XLSX.utils.aoa_to_sheet(rows);
+      worksheet['!cols'] = [
+        { wch: 34 },
+        { wch: 34 },
+        { wch: 18 },
+        { wch: 18 },
+        { wch: 30 },
+        { wch: 12 },
+        { wch: 20 },
+        { wch: 26 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 18 },
+        { wch: 16 },
+        { wch: 26 },
+        { wch: 14 },
+      ];
+      applyTextFormatToColumns(worksheet, headers, ['Barcode', 'SKU', 'Invoice Number']);
+
+      const optionGroups = [
+        { key: 'locations', name: 'TransferLocations', values: locationOptions },
+        { key: 'yes_no', name: 'YesNoOptions', values: yesNoOptions },
+      ];
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Bulk Stock Transfer');
+      XLSX.utils.book_append_sheet(workbook, buildOptionsSheet(optionGroups), 'Options');
+      addOptionNamedRanges(workbook, optionGroups);
+      hideOptionsSheet(workbook);
+
+      await saveWorkbookWithValidations(
+        workbook,
+        'stock-transfer-bulk-template.xlsx',
+        [
+          {
+            range: 'A2:A501',
+            formula: optionFormula(optionGroups, 'locations'),
+            errorTitle: 'Invalid source',
+            error: 'Select a source from the dropdown.',
+            promptTitle: 'Source',
+            prompt: 'Select source store or warehouse.',
+          },
+          {
+            range: 'B2:B501',
+            formula: optionFormula(optionGroups, 'locations'),
+            errorTitle: 'Invalid destination',
+            error: 'Select a destination from the dropdown.',
+            promptTitle: 'Destination',
+            prompt: 'Select destination store or warehouse.',
+          },
+          {
+            range: 'N2:N501',
+            formula: optionFormula(optionGroups, 'yes_no'),
+            errorTitle: 'Invalid tax option',
+            error: 'Select Yes or No.',
+            promptTitle: 'Apply Taxes',
+            prompt: 'Choose whether tax should be applied.',
+          },
+        ],
+        'xl/worksheets/sheet1.xml',
+        { quotePrefixRanges: ['C2:C501', 'D2:D501', 'K2:K501'] },
+      );
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to download stock transfer template');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleBulkImport = async () => {
+    setBulkBusy(true);
+    try {
+      const locations = stores.length ? stores : await loadLocations();
       const file = await pickSpreadsheetFile();
       if (!file) return;
 
@@ -149,38 +362,142 @@ export default function StockTransferPage() {
         return;
       }
 
-      const created = [];
-      let failed = 0;
+      const preparedRows = [];
+      const errors = [];
 
       for (const row of rows) {
-        const sourceId = getBulkField(row, ['source_id', 'source']);
-        const destinationId = getBulkField(row, ['destination_id', 'destination']);
-        if (!sourceId || !destinationId || String(sourceId) === String(destinationId)) {
-          failed += 1;
+        const rowNumber = Number(row.__row_index || 0) + 2;
+        const sourceId = resolveLocationId(getBulkField(row, ['source_id', 'source']), locations);
+        const destinationId = resolveLocationId(getBulkField(row, ['destination_id', 'destination']), locations);
+        const barcode = getBulkField(row, ['barcode', 'bar_code']);
+        const sku = getBulkField(row, ['sku']);
+        const productName = getBulkField(row, ['product_name', 'product']);
+        const qty = toNumber(getBulkField(row, ['quantity', 'qty']), 0);
+        const invoiceDate = getRowDate(getBulkField(row, ['invoice_date', 'date']));
+        const invoiceNumber = getBulkField(row, ['invoice_number', 'invoice_no']);
+        const otherCharges = toNumber(getBulkField(row, ['other_charges']), 0);
+        const remarks = getBulkField(row, ['remarks', 'remark']);
+        const applyTaxes = toBoolean(getBulkField(row, ['apply_taxes']), true);
+
+        const sourceExists = locations.some((location) => String(location.id) === String(sourceId));
+        const destinationExists = locations.some((location) => String(location.id) === String(destinationId));
+
+        if (!sourceId || !destinationId) {
+          errors.push(`Row ${rowNumber}: source and destination are required.`);
           continue;
         }
+        if (!sourceExists || !destinationExists) {
+          errors.push(`Row ${rowNumber}: source or destination does not match an existing store/warehouse.`);
+          continue;
+        }
+        if (String(sourceId) === String(destinationId)) {
+          errors.push(`Row ${rowNumber}: source and destination cannot be the same.`);
+          continue;
+        }
+        if (!barcode && !sku && !productName) {
+          errors.push(`Row ${rowNumber}: barcode, SKU or product name is required.`);
+          continue;
+        }
+        if (qty <= 0) {
+          errors.push(`Row ${rowNumber}: quantity must be greater than zero.`);
+          continue;
+        }
+
         try {
-          const draft = await postTransfer({
-            source: String(sourceId),
-            destination: String(destinationId),
-            applyTaxes: toBoolean(getBulkField(row, ['apply_taxes']), true),
+          const searchValue = barcode || sku || productName;
+          const records = await fetchInventoryProducts(sourceId, searchValue);
+          const product = findExactProduct(records, { barcode, sku, productName });
+          if (!product) {
+            errors.push(`Row ${rowNumber}: product not found in source inventory.`);
+            continue;
+          }
+          const availableStock = toNumber(product.availableStock ?? product.available_stock, 0);
+          if (qty > availableStock) {
+            errors.push(`Row ${rowNumber}: ${product.name} has only ${availableStock} available.`);
+            continue;
+          }
+
+          const costPrice = toNumber(getBulkField(row, ['cost_unit', 'cost_per_unit', 'cost_price', 'cost']), toNumber(product.cost_price, 0));
+          const mrp = toNumber(getBulkField(row, ['mrp', 'mrp_on_destination', 'mrp_on_destination_store', 'destination_mrp']), toNumber(product.mrp, 0));
+          const sellingPrice = toNumber(
+            getBulkField(row, ['selling_price', 'selling_price_on_destination', 'destination_selling_price']),
+            toNumber(product.selling_price || product.sellingPrice, mrp),
+          );
+          const taxRate = toNumber(product.taxRate ?? product.tax_rate, 0);
+
+          preparedRows.push({
+            sourceId: String(sourceId),
+            destinationId: String(destinationId),
+            invoiceDate,
+            invoiceNumber,
+            otherCharges,
+            remarks,
+            applyTaxes,
+            item: {
+              product_id: getNumericId(product.id ?? product.product_id),
+              batch_id: getBatchId(product),
+              name: product.name || productName,
+              sku: product.sku || sku,
+              barcode: product.barcode || barcode,
+              qty,
+              cost_price: costPrice,
+              mrp,
+              destination_mrp: mrp,
+              selling_price: sellingPrice,
+              tax_value: applyTaxes ? (costPrice * taxRate) / 100 : 0,
+              available_stock: availableStock,
+              meta: { bulkTransfer: true, sourceRow: rowNumber },
+            },
           });
-          created.push(draft);
-        } catch {
-          failed += 1;
+        } catch (err) {
+          errors.push(`Row ${rowNumber}: ${err.message || 'product lookup failed'}`);
         }
       }
 
-      if (!created.length) {
-        alert('Could not import any row. Check columns like source_id and destination_id.');
+      if (!preparedRows.length) {
+        alert(`Could not import any row.${errors.length ? `\n\n${errors.slice(0, 8).join('\n')}` : ''}`);
         return;
       }
 
-      alert(`Bulk import complete: ${created.length} draft(s) created${failed ? `, ${failed} failed` : ''}. Opening the first draft.`);
-      setDraftId(created[0].id);
+      const groups = new Map();
+      for (const row of preparedRows) {
+        const key = buildTransferGroupKey(row);
+        if (!groups.has(key)) groups.set(key, { ...row, items: [] });
+        groups.get(key).items.push(row.item);
+      }
+
+      const confirmed = [];
+      for (const group of groups.values()) {
+        const draft = await postTransfer({
+          source: group.sourceId,
+          destination: group.destinationId,
+          applyTaxes: group.applyTaxes,
+          bulkImport: true,
+        });
+        await confirmTransfer(draft.id, {
+          form: {
+            invoice_date: group.invoiceDate,
+            invoice_number: group.invoiceNumber,
+            other_charges: group.otherCharges,
+            remarks: group.remarks,
+            bulk_import: true,
+          },
+          items: group.items,
+        });
+        confirmed.push(draft);
+      }
+
+      alert(
+        `Bulk transfer complete: ${confirmed.length} transfer(s), ${preparedRows.length} item row(s).${
+          errors.length ? `\n\nSkipped rows:\n${errors.slice(0, 8).join('\n')}${errors.length > 8 ? `\n...and ${errors.length - 8} more` : ''}` : ''
+        }`,
+      );
+      loadList();
     } catch (err) {
       console.error(err);
-      alert('Bulk import failed. Please use a valid Excel/CSV file.');
+      alert(err.message || 'Bulk import failed. Please use a valid Excel/CSV file.');
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -202,13 +519,42 @@ export default function StockTransferPage() {
     }
   };
 
+  const handleRevert = async (row) => {
+    if (!row?._id) return;
+    setPendingRevert(row);
+  };
+
+  const confirmRevert = async () => {
+    const row = pendingRevert;
+    const id = row?._id;
+    if (!id) return;
+    setRevertingId(id);
+    setLoadingList(true);
+    try {
+      await revertTransfer(id);
+      setPendingRevert(null);
+      alert('Stock transfer reverted successfully.');
+      loadList();
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to revert stock transfer');
+      setLoadingList(false);
+    } finally {
+      setRevertingId(null);
+    }
+  };
+
   return (
     <>
       <InventoryShell
         breadcrumb={[{ label: 'Inventory' }, { label: 'Stock Transfer' }]}
         title="Stock Transfer"
         subtitle="Stock Transfer transaction history of last 7 days. Need Help?"
-        actions={[{ label: 'Bulk Operations', onClick: handleBulkImport }, { label: 'Stock Transfer', primary: true, onClick: openModal }]}
+        actions={[
+          { label: bulkBusy ? 'Working...' : 'Upload Bulk Sheet', onClick: handleBulkImport },
+          { label: 'Download Template', onClick: handleDownloadBulkTemplate },
+          { label: 'Stock Transfer', primary: true, onClick: openModal },
+        ]}
         searchPlaceholder="Search"
         filters={(
           <>
@@ -246,6 +592,15 @@ export default function StockTransferPage() {
         tableHeaders={tableHeaders}
         tableData={loadingList ? [] : visibleTableData}
         emptyMessage={loadingList ? 'Loading records...' : 'No Records Found'}
+        rowActions={(row) => (
+          <button
+            type="button"
+            onClick={() => handleRevert(row)}
+            className="rounded-lg border border-red-200 px-3 py-1.5 text-[12px] font-semibold text-red-600 hover:bg-red-50"
+          >
+            Revert
+          </button>
+        )}
       />
 
       {showModal && (
@@ -339,7 +694,84 @@ export default function StockTransferPage() {
           }}
         />
       )}
+
+      {pendingRevert && (
+        <RevertConfirmDialog
+          row={pendingRevert}
+          busy={revertingId === pendingRevert._id}
+          onCancel={() => {
+            if (!revertingId) setPendingRevert(null);
+          }}
+          onConfirm={confirmRevert}
+        />
+      )}
     </>
+  );
+}
+
+function RevertConfirmDialog({ row, busy, onCancel, onConfirm }) {
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-[2px]">
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="revert-dialog-title"
+        aria-describedby="revert-dialog-message"
+        className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.28)]"
+      >
+        <div className="flex items-start gap-3 border-b border-slate-100 px-5 py-4">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-700">
+            <i className="ti ti-rotate-2 text-[22px]" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 id="revert-dialog-title" className="text-[15px] font-black text-slate-900">
+              Revert stock transfer?
+            </h2>
+            <p className="mt-1 text-[12px] font-medium text-slate-500">
+              This action will reverse the selected transfer.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+            aria-label="Close dialog"
+          >
+            <i className="ti ti-x text-[18px]" />
+          </button>
+        </div>
+
+        <div className="px-5 py-5">
+          <p id="revert-dialog-message" className="text-[14px] font-semibold leading-6 text-slate-800">
+            Revert {row['Transaction ID']}?
+          </p>
+          <p className="mt-2 text-[13px] leading-6 text-slate-600">
+            Stock will be removed from <strong>{row['Destination Name']}</strong> and added back to <strong>{row['Source Name']}</strong>.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="min-w-[96px] rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[13px] font-bold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            autoFocus
+            className="min-w-[112px] rounded-xl bg-[#B00000] px-4 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_rgba(176,0,0,0.22)] transition-colors hover:bg-[#930000] disabled:opacity-60"
+          >
+            {busy ? 'Reverting...' : 'Revert'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -432,7 +864,7 @@ function TransferLineItemsWindow({ id, onClose, onConfirmed }) {
   );
 
   const addToCart = (product) => {
-    const productId = product.id ?? product.product_id;
+    const productId = getNumericId(product.id ?? product.product_id);
     const availableStock = Number(product.availableStock ?? product.available_stock ?? 0);
     if (availableStock <= 0) return;
     setCart((current) => {
@@ -446,14 +878,23 @@ function TransferLineItemsWindow({ id, onClose, onConfirmed }) {
         );
       }
       const cost = Number(product.cost_price || 0);
+      const mrp = Number(product.mrp || 0);
+      const sellingPrice = Number(
+        product.selling_price || product.sellingPrice || product.mrp || 0
+      );
       const taxRate = Number(product.tax_rate || 0);
       return [
         ...current,
         {
           product_id: productId,
+          batch_id: getBatchId(product),
           name: product.name,
           sku: product.sku,
+          barcode: product.barcode,
           cost_price: cost,
+          mrp,
+          destination_mrp: mrp,
+          selling_price: sellingPrice,
           tax_value: draft?.applyTaxes ? (cost * taxRate) / 100 : 0,
           available_stock: availableStock,
           qty: 1,
@@ -465,10 +906,17 @@ function TransferLineItemsWindow({ id, onClose, onConfirmed }) {
   };
 
   const updateQty = (productId, qty) => {
+    const nextQty = toNumber(qty, 0);
     setCart((current) =>
       current.map((item) =>
         String(item.product_id) === String(productId)
-          ? { ...item, qty: Math.min(Math.max(1, Number(qty) || 1), Number(item.available_stock || 1)) }
+          ? {
+              ...item,
+              qty: Math.min(
+                Math.max(0.001, nextQty || 0.001),
+                Number(item.available_stock || 0.001),
+              ),
+            }
           : item
       )
     );
@@ -640,6 +1088,8 @@ function TransferLineItemsWindow({ id, onClose, onConfirmed }) {
                       <tr className="border-b border-gray-100">
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Product</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Qty</th>
+                        <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">MRP</th>
+                        <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Selling</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Cost</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Tax</th>
                         <th className="w-10" />
@@ -655,12 +1105,16 @@ function TransferLineItemsWindow({ id, onClose, onConfirmed }) {
                           <td className="px-2 py-3">
                             <input
                               type="number"
-                              min={1}
+                              min={0.001}
+                              step={0.001}
+                              inputMode="decimal"
                               value={item.qty}
                               onChange={(e) => updateQty(item.product_id, e.target.value)}
                               className="w-20 rounded border border-gray-200 px-2 py-1 text-[13px] text-gray-700"
                             />
                           </td>
+                          <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.mrp)}</td>
+                          <td className="px-2 py-3 text-[13px] font-semibold text-red-700">{formatCurrency(item.selling_price)}</td>
                           <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.cost_price)}</td>
                           <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.tax_value)}</td>
                           <td className="px-2 py-3">

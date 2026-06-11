@@ -1,7 +1,7 @@
-import { query } from '@/lib/db';
-import { toDateInputValue } from '@/lib/dateUtils';
+import { query } from "@/lib/db";
+import { toDateInputValue } from "@/lib/dateUtils";
 
-const BATCH_SCHEMA_VERSION = 2;
+const BATCH_SCHEMA_VERSION = 3;
 const globalForInventoryBatching = globalThis;
 
 function toNumber(value, fallback = 0) {
@@ -13,13 +13,30 @@ function normalizeDate(value) {
   return toDateInputValue(value) || null;
 }
 
+function normalizeBatchMeta(meta = {}, costPrice = 0) {
+  const normalized = { ...(meta || {}) };
+  const cost = toNumber(normalized.costPrice, toNumber(costPrice));
+  const mrp = toNumber(normalized.mrp);
+  const sellingPrice = toNumber(normalized.sellingPrice);
+
+  normalized.costPrice = cost;
+  if (mrp > 0) normalized.mrp = mrp;
+  if (sellingPrice > 0) normalized.sellingPrice = sellingPrice;
+
+  return normalized;
+}
+
 function buildBatchNumber({ stockInId, productId, batchNo }) {
-  const clean = String(batchNo || '').trim();
+  const clean = String(batchNo || "").trim();
   return clean || `AUTO-${stockInId}-${productId}`;
 }
 
 export async function ensureInventoryBatchSchema() {
-  if (globalForInventoryBatching._inventoryBatchSchemaVersion === BATCH_SCHEMA_VERSION) return;
+  if (
+    globalForInventoryBatching._inventoryBatchSchemaVersion ===
+    BATCH_SCHEMA_VERSION
+  )
+    return;
 
   await query(`
     CREATE TABLE IF NOT EXISTS inventory_batches (
@@ -31,7 +48,7 @@ export async function ensureInventoryBatchSchema() {
       expiry_date DATE,
       received_qty NUMERIC(14, 3) NOT NULL DEFAULT 0,
       available_qty NUMERIC(14, 3) NOT NULL DEFAULT 0,
-      cost_price NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      cost_price NUMERIC(18, 9) NOT NULL DEFAULT 0,
       source_type VARCHAR(60),
       source_id VARCHAR(120),
       status VARCHAR(30) NOT NULL DEFAULT 'active',
@@ -88,6 +105,9 @@ export async function ensureInventoryBatchSchema() {
       WHERE status = 'active' AND available_qty > 0;
     CREATE INDEX IF NOT EXISTS idx_inventory_batch_movements_ref
       ON inventory_batch_movements(reference_type, reference_id);
+
+    ALTER TABLE inventory_batches
+      ALTER COLUMN cost_price TYPE NUMERIC(18, 9) USING cost_price::numeric;
 
     DO $$
     BEGIN
@@ -158,28 +178,60 @@ export async function ensureInventoryBatchSchema() {
         updated_at = NOW()
     FROM inventory_batches source
     WHERE destination.meta ? 'sourceBatchId'
-      AND source.id = NULLIF(destination.meta->>'sourceBatchId', '')::BIGINT
+      AND source.id = CASE
+        WHEN NULLIF(destination.meta->>'sourceBatchId', '') ~ '^[0-9]+$'
+          THEN NULLIF(destination.meta->>'sourceBatchId', '')::BIGINT
+        ELSE NULL
+      END
       AND (
         destination.mfg_date IS DISTINCT FROM source.mfg_date
         OR destination.expiry_date IS DISTINCT FROM source.expiry_date
       );
+
+    UPDATE inventory_batches ib
+    SET meta = COALESCE(ib.meta, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
+          'costPrice', CASE WHEN COALESCE(sii.cost_price, 0) > 0 THEN sii.cost_price ELSE NULL END,
+          'mrp', CASE WHEN COALESCE(sii.mrp, 0) > 0 THEN sii.mrp ELSE NULL END,
+          'sellingPrice', CASE WHEN COALESCE(sii.selling_price, 0) > 0 THEN sii.selling_price ELSE NULL END
+        )),
+        cost_price = CASE
+          WHEN COALESCE(sii.cost_price, 0) > 0 THEN sii.cost_price
+          ELSE ib.cost_price
+        END,
+        updated_at = NOW()
+    FROM stock_in_items sii
+    WHERE ib.source_type = 'stock_in'
+      AND sii.id = CASE
+        WHEN NULLIF(ib.source_id, '') ~ '^[0-9]+$'
+          THEN NULLIF(ib.source_id, '')::BIGINT
+        ELSE NULL
+      END
+      AND (
+        COALESCE(sii.cost_price, 0) > 0
+        OR COALESCE(sii.mrp, 0) > 0
+        OR COALESCE(sii.selling_price, 0) > 0
+      );
   `);
 
-  globalForInventoryBatching._inventoryBatchSchemaVersion = BATCH_SCHEMA_VERSION;
+  globalForInventoryBatching._inventoryBatchSchemaVersion =
+    BATCH_SCHEMA_VERSION;
 }
 
-export async function receiveBatchStock(client, {
-  stockInId,
-  stockInItemId = null,
-  productId,
-  storeId,
-  qty,
-  costPrice = 0,
-  batchNo = '',
-  mfgDate = null,
-  expiryDate = null,
-  meta = {},
-}) {
+export async function receiveBatchStock(
+  client,
+  {
+    stockInId,
+    stockInItemId = null,
+    productId,
+    storeId,
+    qty,
+    costPrice = 0,
+    batchNo = "",
+    mfgDate = null,
+    expiryDate = null,
+    meta = {},
+  },
+) {
   await ensureInventoryBatchSchema();
 
   const quantity = toNumber(qty);
@@ -188,6 +240,7 @@ export async function receiveBatchStock(client, {
   const normalizedBatchNo = buildBatchNumber({ stockInId, productId, batchNo });
   const normalizedMfgDate = normalizeDate(mfgDate);
   const normalizedExpiryDate = normalizeDate(expiryDate);
+  const normalizedMeta = normalizeBatchMeta(meta, costPrice);
 
   const batchRes = await client.query(
     `INSERT INTO inventory_batches (
@@ -209,8 +262,8 @@ export async function receiveBatchStock(client, {
       quantity,
       toNumber(costPrice),
       String(stockInItemId || stockInId),
-      JSON.stringify(meta),
-    ]
+      JSON.stringify(normalizedMeta),
+    ],
   );
 
   const batch = batchRes.rows[0];
@@ -225,28 +278,33 @@ export async function receiveBatchStock(client, {
       quantity,
       String(stockInId),
       stockInItemId,
-      JSON.stringify(meta),
-    ]
+      JSON.stringify(normalizedMeta),
+    ],
   );
 
   return batch;
 }
 
-export async function restoreBatchStock(client, {
-  batchId,
-  productId,
-  storeId,
-  qty,
-  referenceType = 'sales_return',
-  referenceId = null,
-  sourceItemId = null,
-  meta = {},
-}) {
+export async function restoreBatchStock(
+  client,
+  {
+    batchId,
+    productId,
+    storeId,
+    qty,
+    referenceType = "sales_return",
+    referenceId = null,
+    sourceItemId = null,
+    meta = {},
+  },
+) {
   await ensureInventoryBatchSchema();
 
   const quantity = toNumber(qty);
   const normalizedBatchId = Number(batchId);
-  if (!normalizedBatchId || !productId || !storeId || quantity <= 0) return null;
+  if (!normalizedBatchId || !productId || !storeId || quantity <= 0)
+    return null;
+  const normalizedMeta = normalizeBatchMeta(meta);
 
   const batchRes = await client.query(
     `UPDATE inventory_batches
@@ -257,7 +315,7 @@ export async function restoreBatchStock(client, {
        AND product_id = $3
        AND store_id = $4
      RETURNING *`,
-    [quantity, normalizedBatchId, Number(productId), Number(storeId)]
+    [quantity, normalizedBatchId, Number(productId), Number(storeId)],
   );
 
   const batch = batchRes.rows[0];
@@ -275,33 +333,39 @@ export async function restoreBatchStock(client, {
       referenceType,
       referenceId ? String(referenceId) : null,
       sourceItemId,
-      JSON.stringify(meta),
-    ]
+      JSON.stringify(normalizedMeta),
+    ],
   );
 
   return batch;
 }
 
-export async function allocateBatchStock(client, {
-  productId,
-  storeId,
-  qty,
-  preferredBatchId = null,
-  allowedBatchIds = [],
-  strategy = 'FEFO',
-  referenceType = 'stock_out',
-  referenceId = null,
-  sourceItemId = null,
-  allowExpired = false,
-  meta = {},
-}) {
+export async function allocateBatchStock(
+  client,
+  {
+    productId,
+    storeId,
+    qty,
+    preferredBatchId = null,
+    allowedBatchIds = [],
+    strategy = "FEFO",
+    referenceType = "stock_out",
+    referenceId = null,
+    sourceItemId = null,
+    allowExpired = false,
+    meta = {},
+  },
+) {
   await ensureInventoryBatchSchema();
 
   const requiredQty = toNumber(qty);
   if (!productId || !storeId || requiredQty <= 0) return [];
 
-  const mode = String(strategy || 'FEFO').toUpperCase() === 'FIFO' ? 'FIFO' : 'FEFO';
-  const expiryGuard = allowExpired ? '' : 'AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)';
+  const mode =
+    String(strategy || "FEFO").toUpperCase() === "FIFO" ? "FIFO" : "FEFO";
+  const expiryGuard = allowExpired
+    ? ""
+    : "AND (ib.expiry_date IS NULL OR ib.expiry_date >= CURRENT_DATE)";
   const preferredId = Number(preferredBatchId);
   const hasPreferredBatch = Number.isFinite(preferredId) && preferredId > 0;
   const allowedIds = (Array.isArray(allowedBatchIds) ? allowedBatchIds : [])
@@ -309,13 +373,14 @@ export async function allocateBatchStock(client, {
     .filter((id) => Number.isFinite(id) && id > 0);
   const hasAllowedBatches = !hasPreferredBatch && allowedIds.length > 0;
   const batchGuard = hasPreferredBatch
-    ? 'AND id = $3'
+    ? "AND ib.id = $3"
     : hasAllowedBatches
-      ? 'AND id = ANY($3::bigint[])'
-      : '';
-  const orderBy = mode === 'FIFO'
-    ? 'created_at ASC, id ASC'
-    : 'CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END ASC, expiry_date ASC, created_at ASC, id ASC';
+      ? "AND ib.id = ANY($3::bigint[])"
+      : "";
+  const orderBy =
+    mode === "FIFO"
+      ? "ib.created_at ASC, ib.id ASC"
+      : "CASE WHEN ib.expiry_date IS NULL THEN 1 ELSE 0 END ASC, ib.expiry_date ASC, ib.created_at ASC, ib.id ASC";
 
   const params = hasPreferredBatch
     ? [Number(productId), Number(storeId), preferredId]
@@ -324,17 +389,28 @@ export async function allocateBatchStock(client, {
       : [Number(productId), Number(storeId)];
 
   const batchRes = await client.query(
-    `SELECT id, product_id, store_id, batch_no, mfg_date, expiry_date, available_qty, cost_price, meta
-     FROM inventory_batches
-     WHERE product_id = $1
-       AND store_id = $2
-       AND status = 'active'
-       AND available_qty > 0
+    `SELECT ib.id, ib.product_id, ib.store_id, ib.batch_no, ib.mfg_date, ib.expiry_date,
+            ib.available_qty, ib.cost_price, ib.meta,
+            sii.mrp AS source_mrp,
+            sii.selling_price AS source_selling_price,
+            sii.cost_price AS source_cost_price
+     FROM inventory_batches ib
+     LEFT JOIN stock_in_items sii
+       ON ib.source_type = 'stock_in'
+      AND sii.id = CASE
+        WHEN NULLIF(ib.source_id, '') ~ '^[0-9]+$'
+          THEN NULLIF(ib.source_id, '')::BIGINT
+        ELSE NULL
+      END
+     WHERE ib.product_id = $1
+       AND ib.store_id = $2
+       AND ib.status = 'active'
+       AND ib.available_qty > 0
        ${expiryGuard}
        ${batchGuard}
      ORDER BY ${orderBy}
-     FOR UPDATE`,
-    params
+     FOR UPDATE OF ib`,
+    params,
   );
 
   let remaining = requiredQty;
@@ -352,7 +428,7 @@ export async function allocateBatchStock(client, {
            status = CASE WHEN available_qty - $1 <= 0 THEN 'depleted' ELSE status END,
            updated_at = NOW()
        WHERE id = $2`,
-      [usedQty, batch.id]
+      [usedQty, batch.id],
     );
 
     await client.query(
@@ -368,7 +444,7 @@ export async function allocateBatchStock(client, {
         referenceId ? String(referenceId) : null,
         sourceItemId,
         JSON.stringify({ ...meta, strategy: mode }),
-      ]
+      ],
     );
 
     allocations.push({
@@ -377,22 +453,32 @@ export async function allocateBatchStock(client, {
       mfgDate: normalizeDate(batch.mfg_date),
       expiryDate: normalizeDate(batch.expiry_date),
       qty: usedQty,
-      costPrice: toNumber(batch.cost_price),
-      mrp: toNumber(batch.meta?.mrp),
-      sellingPrice: toNumber(batch.meta?.sellingPrice),
+      costPrice: toNumber(
+        batch.meta?.costPrice,
+        toNumber(batch.source_cost_price, toNumber(batch.cost_price)),
+      ),
+      mrp: toNumber(batch.meta?.mrp, toNumber(batch.source_mrp)),
+      sellingPrice: toNumber(
+        batch.meta?.sellingPrice,
+        toNumber(batch.source_selling_price),
+      ),
       strategy: mode,
     });
     remaining = Math.round((remaining - usedQty) * 1000) / 1000;
   }
 
   if (remaining > 0) {
-    throw new Error(`Insufficient batch stock for product ${productId}. Short by ${remaining}`);
+    throw new Error(
+      `Insufficient batch stock for product ${productId}. Short by ${remaining}`,
+    );
   }
 
   return allocations;
 }
 
 export function getInventoryIssueStrategy(value) {
-  const normalized = String(value || process.env.INVENTORY_ISSUE_STRATEGY || 'FEFO').toUpperCase();
-  return normalized === 'FIFO' ? 'FIFO' : 'FEFO';
+  const normalized = String(
+    value || process.env.INVENTORY_ISSUE_STRATEGY || "FEFO",
+  ).toUpperCase();
+  return normalized === "FIFO" ? "FIFO" : "FEFO";
 }

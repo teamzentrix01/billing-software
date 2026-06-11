@@ -9,6 +9,20 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function toNumericId(value) {
+  const raw = String(value ?? '').trim();
+  const leading = raw.match(/^\d+/)?.[0];
+  return Number(leading || raw || 0);
+}
+
+function toBatchId(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const parts = raw.match(/\d+/g) || [];
+  const id = Number(parts.length > 1 ? parts[parts.length - 1] : parts[0]);
+  return Number.isFinite(id) && id > 0 ? id : null;
+}
+
 function toQty(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return 0;
@@ -22,9 +36,9 @@ function roundQty(value) {
 function aggregateItems(items) {
   const grouped = new Map();
   for (const item of items) {
-    const productId = Number(item.product_id || item.productId || 0);
+    const productId = toNumericId(item.product_id || item.productId);
     if (!productId) throw new Error('Each item must have a product');
-    const batchId = Number(item.batch_id || item.batchId || 0) || null;
+    const batchId = toBatchId(item.batch_id || item.batchId);
     const qty = toQty(item.qty);
     const costPrice = toNumber(item.cost_price || item.costPrice);
     const taxValue = toNumber(item.tax_value || item.taxValue);
