@@ -204,6 +204,7 @@ export async function POST(request) {
 
     debugLog('[LOGIN] Fetching employee permissions (roles are informational only)');
     let permissions = [];
+    let hasEmployeeProfile = false;
 
     try {
       const employeePermResult = await query(
@@ -218,6 +219,7 @@ export async function POST(request) {
       );
 
       if (employeePermResult.rows.length > 0) {
+        hasEmployeeProfile = true;
         permissions = Array.isArray(employeePermResult.rows[0]?.permissions)
           ? employeePermResult.rows[0].permissions
           : [];
@@ -227,7 +229,7 @@ export async function POST(request) {
     }
 
     // Super admins without an employee record get full wildcard access
-    if (user.role === 'super_admin' && permissions.length === 0) {
+    if (!hasEmployeeProfile && user.role === 'super_admin' && permissions.length === 0) {
       permissions = ['*'];
     }
 
@@ -255,6 +257,10 @@ export async function POST(request) {
     }
 
     const assignedStores = storesResult.rows.map((s) => s.store_id);
+    const effectiveRole =
+      hasEmployeeProfile && user.role === 'super_admin'
+        ? 'admin'
+        : user.role || 'user';
 
     // ============================================
     // STEP 8: CREATE TOKEN PAYLOAD
@@ -266,7 +272,7 @@ export async function POST(request) {
       id: user.id,
       email: user.email,
       name: user.name || user.email,
-      role: user.role || 'user',
+      role: effectiveRole,
       permissions,
       assigned_stores: assignedStores,
     });
@@ -345,7 +351,7 @@ export async function POST(request) {
     // ============================================
 
     debugLog('[LOGIN] Login successful for:', email);
-    const defaultRoute = getDefaultRoute(user.role);
+    const defaultRoute = getDefaultRoute(effectiveRole);
     debugLog('[LOGIN] Redirecting to', defaultRoute);
 
     // Create redirect response

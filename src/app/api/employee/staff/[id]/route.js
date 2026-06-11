@@ -34,7 +34,7 @@ function normalizeStoreIds(input) {
 
 function normalizeSystemRole(roleName, userType) {
   const value = String(roleName || userType || '').trim().toLowerCase().replace(/\s+/g, '_');
-  if (value === 'super_admin' || value === 'superadmin') return 'super_admin';
+  if (value === 'super_admin' || value === 'superadmin') return 'admin';
   if (value === 'admin' || value === 'administrator') return 'admin';
   if (value === 'manager' || value === 'store_manager') return 'manager';
   return 'user';
@@ -128,9 +128,12 @@ export async function PUT(request, { params }) {
     const warehouse = Array.isArray(body.warehouse)
       ? body.warehouse.map((item) => String(item).trim()).filter(Boolean).join(',')
       : toString(body.warehouse);
-    const assignedStores = normalizeStoreIds(
+    const assignedStores = Array.from(new Set([
+      ...normalizeStoreIds(
       body.assigned_stores || body.assignedStores || body.store_ids || body.storeIds || body.store_id || body.storeId || regionStore
-    );
+      ),
+      ...normalizeStoreIds(warehouse),
+    ]));
     const permissions = normalizePermissions(body.permissions);
     const departmentId = body.department_id ?? body.departmentId ?? null;
     const departmentName = toString(body.department_name || body.departmentName);

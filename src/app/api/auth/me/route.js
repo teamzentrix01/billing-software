@@ -49,6 +49,7 @@ export async function GET() {
 
     let employeeRoleName = null;
     let employeePermissions = null;
+    let hasEmployeeProfile = false;
     try {
       const employeeResult = await query(
         `SELECT role_name, permissions
@@ -61,6 +62,7 @@ export async function GET() {
         [dbUser.id, dbUser.email || '', dbUser.name || '']
       );
       if (employeeResult.rows.length > 0) {
+        hasEmployeeProfile = true;
         employeeRoleName = employeeResult.rows[0]?.role_name || null;
         employeePermissions = Array.isArray(employeeResult.rows[0]?.permissions)
           ? employeeResult.rows[0].permissions
@@ -79,21 +81,28 @@ export async function GET() {
 
     // Super admins without an employee record get full wildcard access
     const isSuperAdmin = (dbUser.role === 'super_admin');
-    const resolvedPermissions = isSuperAdmin && (employeePermissions === null || employeePermissions.length === 0)
+    const resolvedPermissions = isSuperAdmin && !hasEmployeeProfile && (employeePermissions === null || employeePermissions.length === 0)
       ? ['*']
       : employeePermissions !== null
         ? employeePermissions
         : (Array.isArray(payload.permissions) ? payload.permissions : []);
+    const assignedStores = storesResult.rows.map((row) => Number(row.store_id));
+    const effectiveRole =
+      hasEmployeeProfile && dbUser.role === 'super_admin'
+        ? 'admin'
+        : dbUser.role || 'user';
 
     // Construct user object from token + latest database access rules
     const user = {
       id: dbUser.id,
       email: dbUser.email,
       name: dbUser.name || dbUser.email,
-      role: dbUser.role || 'user',
+      role: effectiveRole,
+      system_role: dbUser.role || 'user',
       role_name: employeeRoleName || dbUser.role || 'user',
       permissions: resolvedPermissions,
-      assigned_stores: storesResult.rows.map((row) => Number(row.store_id)),
+      assigned_stores: assignedStores,
+      is_employee: hasEmployeeProfile,
       assigned_store_names: storesResult.rows
         .map((row) => row.store_name)
         .filter(Boolean),

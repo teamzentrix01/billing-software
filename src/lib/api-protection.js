@@ -66,6 +66,7 @@ export async function extractAuthUser(request) {
     let permissions = Array.isArray(payload.permissions) ? payload.permissions : [];
     let employeeRoleName = null;
     let employeePermissions = null;
+    let hasEmployeeProfile = false;
 
     try {
       const employeeResult = await query(
@@ -80,6 +81,7 @@ export async function extractAuthUser(request) {
       );
 
       if (employeeResult.rows.length > 0) {
+        hasEmployeeProfile = true;
         employeeRoleName = employeeResult.rows[0]?.role_name || null;
         employeePermissions = Array.isArray(employeeResult.rows[0]?.permissions)
           ? employeeResult.rows[0].permissions
@@ -91,7 +93,7 @@ export async function extractAuthUser(request) {
       }
     } catch {}
 
-    if (dbUser.role === 'super_admin' && permissions.length === 0) {
+    if (!hasEmployeeProfile && dbUser.role === 'super_admin' && permissions.length === 0) {
       permissions = ['*'];
     }
 
@@ -104,14 +106,21 @@ export async function extractAuthUser(request) {
       assignedStores = storeResult.rows.map((row) => Number(row.store_id));
     } catch {}
 
+    const effectiveRole =
+      hasEmployeeProfile && dbUser.role === 'super_admin'
+        ? 'admin'
+        : dbUser.role || 'user';
+
     const user = {
       id: dbUser.id,
       email: dbUser.email,
       name: dbUser.name || dbUser.email,
-      role: dbUser.role || 'user',
+      role: effectiveRole,
+      system_role: dbUser.role || 'user',
       role_name: employeeRoleName || dbUser.role || 'user',
       permissions,
       assigned_stores: assignedStores,
+      is_employee: hasEmployeeProfile,
     };
 
     return { user, token, error: null };
@@ -187,7 +196,7 @@ export function requirePermission(user, ...permissions) {
 
   const userPerms = Array.isArray(user.permissions) ? user.permissions : [];
   const hasPermission =
-    user.role === 'super_admin' ||
+    (user.role === 'super_admin' && canAccessAllStores(user)) ||
     userPerms.includes('*') ||
     permissions.some((p) => userPerms.includes(p));
 
@@ -214,7 +223,7 @@ export function requireStore(user, storeId) {
     return { error: unauthorizedError('Not authenticated') };
   }
 
-  if (user.role === 'super_admin') return { error: null };
+  if (canAccessAllStores(user)) return { error: null };
 
   // Check if user is assigned to this store
   if (!user.assigned_stores.includes(Number(storeId))) {
@@ -233,7 +242,8 @@ export function getAssignedStoreIds(user) {
 }
 
 export function canAccessAllStores(user) {
-  return user?.role === 'super_admin';
+  const assignedStores = getAssignedStoreIds(user);
+  return user?.role === 'super_admin' && assignedStores.length === 0 && !user?.is_employee;
 }
 
 export function getStoreScope(user, requestedStoreId = null) {

@@ -117,7 +117,7 @@ export function hasAnyRole(user, roles) {
 
 export function canAccessStore(user, storeId) {
   if (!user) return false;
-  if (user.role === 'super_admin') return true;
+  if (canAccessAllStoresGlobally(user)) return true;
 
   // Check if store is assigned
   return user.assigned_stores.includes(storeId);
@@ -129,14 +129,14 @@ export function canAccessStore(user, storeId) {
 
 export function canAccessAnyStore(user, storeIds) {
   if (!user) return false;
-  if (user.role === 'super_admin') return true;
+  if (canAccessAllStoresGlobally(user)) return true;
 
   return storeIds.some((storeId) => user.assigned_stores.includes(storeId));
 }
 
 export function canAccessAllStores(user, storeIds) {
   if (!user) return false;
-  if (user.role === 'super_admin') return true;
+  if (canAccessAllStoresGlobally(user)) return true;
 
   return storeIds.every((storeId) => user.assigned_stores.includes(storeId));
 }
@@ -147,7 +147,7 @@ export function canAccessAllStores(user, storeIds) {
 
 export function getUserStores(user) {
   if (!user) return [];
-  if (user.role === 'super_admin') return ['all']; // Indicate access to all
+  if (canAccessAllStoresGlobally(user)) return ['all']; // Indicate access to all
 
   return user.assigned_stores || [];
 }
@@ -159,7 +159,7 @@ export function getUserStores(user) {
 export function getStoreFilterClause(user, tableAlias = '') {
   if (!user) return '1 = 0'; // Deny access
 
-  if (user.role === 'super_admin') {
+  if (canAccessAllStoresGlobally(user)) {
     return '1 = 1'; // Allow all
   }
 
@@ -172,6 +172,11 @@ export function getStoreFilterClause(user, tableAlias = '') {
 
   // Return SQL clause for store filtering
   return `${prefix}store_id = ANY(ARRAY[${storeIds.join(',')}])`;
+}
+
+function canAccessAllStoresGlobally(user) {
+  const assignedStores = (user?.assigned_stores || []).map(Number).filter(Number.isFinite);
+  return user?.role === 'super_admin' && assignedStores.length === 0 && !user?.is_employee;
 }
 
 // ============================================
