@@ -1,7 +1,7 @@
 import { query } from '@/lib/db';
 
 // Bump this version when schema migrations change so hot-reload re-runs them
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 let ensuredVersion = 0;
 
 export async function ensureStockInSchema() {
@@ -44,7 +44,7 @@ export async function ensureStockInSchema() {
       product_id INTEGER NOT NULL,
       product_name VARCHAR(255),
       qty NUMERIC(14, 3) NOT NULL DEFAULT 1,
-      cost_price NUMERIC(14, 2) DEFAULT 0,
+      cost_price NUMERIC(18, 9) DEFAULT 0,
       tax_value NUMERIC(14, 2) DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
@@ -62,11 +62,29 @@ export async function ensureStockInSchema() {
 
   await query(`
     ALTER TABLE stock_in_items
-      ADD COLUMN IF NOT EXISTS mrp NUMERIC(14, 2) DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS selling_price NUMERIC(14, 2) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS mrp NUMERIC(18, 9) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS selling_price NUMERIC(18, 9) DEFAULT 0,
       ADD COLUMN IF NOT EXISTS serial_number VARCHAR(120),
       ADD COLUMN IF NOT EXISTS scan_code VARCHAR(255),
       ADD COLUMN IF NOT EXISTS meta JSONB NOT NULL DEFAULT '{}'::jsonb;
+  `);
+
+  await query(`
+    ALTER TABLE stock_in_items
+      ALTER COLUMN cost_price TYPE NUMERIC(18, 9) USING cost_price::numeric,
+      ALTER COLUMN mrp TYPE NUMERIC(18, 9) USING mrp::numeric,
+      ALTER COLUMN selling_price TYPE NUMERIC(18, 9) USING selling_price::numeric;
+
+    DO $$
+    BEGIN
+      IF to_regclass('products') IS NOT NULL THEN
+        ALTER TABLE products
+          ALTER COLUMN cost_price TYPE NUMERIC(18, 9) USING cost_price::numeric,
+          ALTER COLUMN mrp TYPE NUMERIC(18, 9) USING mrp::numeric,
+          ALTER COLUMN selling_price TYPE NUMERIC(18, 9) USING selling_price::numeric;
+      END IF;
+    END
+    $$;
   `);
 
   await query(`

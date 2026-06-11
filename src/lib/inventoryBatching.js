@@ -1,7 +1,7 @@
 import { query } from "@/lib/db";
 import { toDateInputValue } from "@/lib/dateUtils";
 
-const BATCH_SCHEMA_VERSION = 2;
+const BATCH_SCHEMA_VERSION = 3;
 const globalForInventoryBatching = globalThis;
 
 function toNumber(value, fallback = 0) {
@@ -48,7 +48,7 @@ export async function ensureInventoryBatchSchema() {
       expiry_date DATE,
       received_qty NUMERIC(14, 3) NOT NULL DEFAULT 0,
       available_qty NUMERIC(14, 3) NOT NULL DEFAULT 0,
-      cost_price NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      cost_price NUMERIC(18, 9) NOT NULL DEFAULT 0,
       source_type VARCHAR(60),
       source_id VARCHAR(120),
       status VARCHAR(30) NOT NULL DEFAULT 'active',
@@ -105,6 +105,9 @@ export async function ensureInventoryBatchSchema() {
       WHERE status = 'active' AND available_qty > 0;
     CREATE INDEX IF NOT EXISTS idx_inventory_batch_movements_ref
       ON inventory_batch_movements(reference_type, reference_id);
+
+    ALTER TABLE inventory_batches
+      ALTER COLUMN cost_price TYPE NUMERIC(18, 9) USING cost_price::numeric;
 
     DO $$
     BEGIN

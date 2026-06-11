@@ -12,6 +12,13 @@ function formatCurrency(n) {
   });
 }
 
+function formatUnitPrice(n) {
+  return Number(n || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 9,
+  });
+}
+
 function formatDate(value) {
   return formatIndianDate(value, "-");
 }
@@ -986,7 +993,7 @@ function LineItemsContent() {
                                   Cost
                                 </div>
                                 <div className="text-[13px] font-medium text-gray-700">
-                                  {formatCurrency(it.cost_price)}
+                                  {formatUnitPrice(it.cost_price)}
                                 </div>
                               </div>
                               <button
@@ -1158,7 +1165,7 @@ function LineItemsContent() {
                               )}
                             </td>
                             <td className="py-3 px-2 text-[13px] text-gray-700">
-                              {formatCurrency(it.cost_price)}
+                              {formatUnitPrice(it.cost_price)}
                             </td>
                             <td className="py-3 px-2">
                               <button
@@ -1288,7 +1295,7 @@ function LineItemsContent() {
                                 <input
                                   type="number"
                                   min="0"
-                                  step="0.01"
+                                  step="0.000000001"
                                   value={selected.cost_price}
                                   onChange={(event) =>
                                     updateSelectedBrandProduct(key, {

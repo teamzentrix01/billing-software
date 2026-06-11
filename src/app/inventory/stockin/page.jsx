@@ -91,6 +91,11 @@ function formatCost(value) {
   return `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
 
+function formatUnitPrice(value) {
+  const n = Number(value || 0);
+  return `â‚¹${n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 9 })}`;
+}
+
 function mapRecordsToTable(records) {
   return (records || []).map((row) => ({
     _id: row.id,
@@ -1881,7 +1886,7 @@ export default function StockInPage() {
                         <td className="px-3 py-2">{item.batch_no || "—"}</td>
                         <td className="px-3 py-2">{item.qty}</td>
                         <td className="px-3 py-2">
-                          {formatCost(item.cost_price)}
+                          {formatUnitPrice(item.cost_price)}
                         </td>
                         <td className="px-3 py-2">
                           {formatCost(item.tax_value)}
@@ -2076,7 +2081,7 @@ export default function StockInPage() {
                       </td>
                       <td className="px-4 py-3 text-right">{row.qty}</td>
                       <td className="px-4 py-3 text-right">
-                        {formatCost(row.cost_price)}
+                        {formatUnitPrice(row.cost_price)}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
                         {formatDate(row.expiry_date)}

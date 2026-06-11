@@ -46,8 +46,8 @@ const CREATE_PRODUCT_SALEABILITY_SQL = `
     product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     store_id BIGINT REFERENCES stores(id) ON DELETE CASCADE,
     is_active BOOLEAN NOT NULL DEFAULT true,
-    selling_price NUMERIC(14, 2) NOT NULL DEFAULT 0,
-    mrp NUMERIC(14, 2) NOT NULL DEFAULT 0,
+    selling_price NUMERIC(18, 9) NOT NULL DEFAULT 0,
+    mrp NUMERIC(18, 9) NOT NULL DEFAULT 0,
     low_stock_value NUMERIC(14, 2) NOT NULL DEFAULT 0,
     minimum_base_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -393,10 +393,15 @@ export async function ensureCatalogExtrasSchema() {
       await query(CREATE_PRODUCT_GROUPS_SQL);
       await query(`
         ALTER TABLE product_saleability
-          ADD COLUMN IF NOT EXISTS selling_price NUMERIC(14, 2) NOT NULL DEFAULT 0,
-          ADD COLUMN IF NOT EXISTS mrp NUMERIC(14, 2) NOT NULL DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS selling_price NUMERIC(18, 9) NOT NULL DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS mrp NUMERIC(18, 9) NOT NULL DEFAULT 0,
           ADD COLUMN IF NOT EXISTS low_stock_value NUMERIC(14, 2) NOT NULL DEFAULT 0,
           ADD COLUMN IF NOT EXISTS minimum_base_quantity NUMERIC(14, 3) NOT NULL DEFAULT 0;
+      `);
+      await query(`
+        ALTER TABLE product_saleability
+          ALTER COLUMN selling_price TYPE NUMERIC(18, 9) USING selling_price::numeric,
+          ALTER COLUMN mrp TYPE NUMERIC(18, 9) USING mrp::numeric;
       `);
       await query(CREATE_PROMOTIONS_SQL);
       // Add additional promotion columns used by the UI
