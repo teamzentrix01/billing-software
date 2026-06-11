@@ -28,6 +28,7 @@ export async function GET(request) {
         st.total_cost,
         st.total_tax,
         st.created_at,
+        st.reverted_at,
         source.name AS source_name,
         destination.name AS destination_name,
         COALESCE(SUM(sti.qty), 0) AS item_qty_sum,
@@ -43,7 +44,7 @@ export async function GET(request) {
       params
     );
 
-    return NextResponse.json(
+      return NextResponse.json(
       res.rows.map((row) => ({
         id: row.id,
         transactionId: row.transaction_id || `TRN-${String(row.id).padStart(4, '0')}`,
@@ -54,6 +55,7 @@ export async function GET(request) {
         totalItems: Number(row.total_items || row.item_qty_sum || 0),
         cost: Number(row.total_cost || Number(row.items_cost_sum || 0) + Number(row.other_charges || 0)),
         totalTax: Number(row.total_tax || 0),
+        revertedAt: row.reverted_at,
         createdAt: row.created_at,
       }))
     );

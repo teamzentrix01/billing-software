@@ -27,8 +27,14 @@ export async function ensureStockTransferSchema() {
       total_tax NUMERIC(14, 2) DEFAULT 0,
       meta JSONB DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ DEFAULT NOW(),
-      confirmed_at TIMESTAMPTZ
+      confirmed_at TIMESTAMPTZ,
+      reverted_at TIMESTAMPTZ,
+      reverted_by INTEGER
     );
+
+    ALTER TABLE stock_transfer
+      ADD COLUMN IF NOT EXISTS reverted_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS reverted_by INTEGER;
 
     CREATE TABLE IF NOT EXISTS stock_transfer_items (
       id SERIAL PRIMARY KEY,

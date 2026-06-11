@@ -63,6 +63,15 @@ async function confirmTransfer(id, payload) {
   return data;
 }
 
+async function revertTransfer(id) {
+  const res = await fetch(`/api/inventory/stocktransfer/${encodeURIComponent(id)}/revert`, {
+    method: 'POST',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to revert stock transfer');
+  return data;
+}
+
 const tableHeaders = [
   'Transaction ID',
   'Invoice Number',
@@ -91,6 +100,7 @@ function formatCurrency(value) {
 
 function mapTransfersToTable(records) {
   return (records || []).map((row) => ({
+    _id: row.id,
     'Transaction ID': row.transactionId ? `#${row.transactionId}` : `#TRN-${row.id}`,
     'Invoice Number': row.invoiceNumber || '-',
     'Source Name': row.sourceName || '-',
@@ -100,6 +110,7 @@ function mapTransfersToTable(records) {
     Cost: formatCost(row.cost),
     _invoiceDate: row.invoiceDate || '',
     _source: row.sourceName || '',
+    _revertedAt: row.revertedAt || '',
   }));
 }
 
@@ -191,6 +202,8 @@ export default function StockTransferPage() {
   const [draftId, setDraftId] = useState(null);
   const [listFilters, setListFilters] = useState({ dateFrom: '', dateTo: '', source: '' });
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [pendingRevert, setPendingRevert] = useState(null);
+  const [revertingId, setRevertingId] = useState(null);
 
   const visibleTableData = useMemo(() => {
     return tableData.filter((row) => {
@@ -506,6 +519,31 @@ export default function StockTransferPage() {
     }
   };
 
+  const handleRevert = async (row) => {
+    if (!row?._id) return;
+    setPendingRevert(row);
+  };
+
+  const confirmRevert = async () => {
+    const row = pendingRevert;
+    const id = row?._id;
+    if (!id) return;
+    setRevertingId(id);
+    setLoadingList(true);
+    try {
+      await revertTransfer(id);
+      setPendingRevert(null);
+      alert('Stock transfer reverted successfully.');
+      loadList();
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to revert stock transfer');
+      setLoadingList(false);
+    } finally {
+      setRevertingId(null);
+    }
+  };
+
   return (
     <>
       <InventoryShell
@@ -554,6 +592,15 @@ export default function StockTransferPage() {
         tableHeaders={tableHeaders}
         tableData={loadingList ? [] : visibleTableData}
         emptyMessage={loadingList ? 'Loading records...' : 'No Records Found'}
+        rowActions={(row) => (
+          <button
+            type="button"
+            onClick={() => handleRevert(row)}
+            className="rounded-lg border border-red-200 px-3 py-1.5 text-[12px] font-semibold text-red-600 hover:bg-red-50"
+          >
+            Revert
+          </button>
+        )}
       />
 
       {showModal && (
@@ -647,7 +694,84 @@ export default function StockTransferPage() {
           }}
         />
       )}
+
+      {pendingRevert && (
+        <RevertConfirmDialog
+          row={pendingRevert}
+          busy={revertingId === pendingRevert._id}
+          onCancel={() => {
+            if (!revertingId) setPendingRevert(null);
+          }}
+          onConfirm={confirmRevert}
+        />
+      )}
     </>
+  );
+}
+
+function RevertConfirmDialog({ row, busy, onCancel, onConfirm }) {
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-[2px]">
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="revert-dialog-title"
+        aria-describedby="revert-dialog-message"
+        className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.28)]"
+      >
+        <div className="flex items-start gap-3 border-b border-slate-100 px-5 py-4">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-700">
+            <i className="ti ti-rotate-2 text-[22px]" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 id="revert-dialog-title" className="text-[15px] font-black text-slate-900">
+              Revert stock transfer?
+            </h2>
+            <p className="mt-1 text-[12px] font-medium text-slate-500">
+              This action will reverse the selected transfer.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+            aria-label="Close dialog"
+          >
+            <i className="ti ti-x text-[18px]" />
+          </button>
+        </div>
+
+        <div className="px-5 py-5">
+          <p id="revert-dialog-message" className="text-[14px] font-semibold leading-6 text-slate-800">
+            Revert {row['Transaction ID']}?
+          </p>
+          <p className="mt-2 text-[13px] leading-6 text-slate-600">
+            Stock will be removed from <strong>{row['Destination Name']}</strong> and added back to <strong>{row['Source Name']}</strong>.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="min-w-[96px] rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[13px] font-bold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            autoFocus
+            className="min-w-[112px] rounded-xl bg-[#B00000] px-4 py-2.5 text-[13px] font-bold text-white shadow-[0_10px_20px_rgba(176,0,0,0.22)] transition-colors hover:bg-[#930000] disabled:opacity-60"
+          >
+            {busy ? 'Reverting...' : 'Revert'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
