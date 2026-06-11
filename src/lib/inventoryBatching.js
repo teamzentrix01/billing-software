@@ -178,7 +178,11 @@ export async function ensureInventoryBatchSchema() {
         updated_at = NOW()
     FROM inventory_batches source
     WHERE destination.meta ? 'sourceBatchId'
-      AND source.id = NULLIF(destination.meta->>'sourceBatchId', '')::BIGINT
+      AND source.id = CASE
+        WHEN NULLIF(destination.meta->>'sourceBatchId', '') ~ '^[0-9]+$'
+          THEN NULLIF(destination.meta->>'sourceBatchId', '')::BIGINT
+        ELSE NULL
+      END
       AND (
         destination.mfg_date IS DISTINCT FROM source.mfg_date
         OR destination.expiry_date IS DISTINCT FROM source.expiry_date
@@ -197,8 +201,11 @@ export async function ensureInventoryBatchSchema() {
         updated_at = NOW()
     FROM stock_in_items sii
     WHERE ib.source_type = 'stock_in'
-      AND NULLIF(ib.source_id, '') ~ '^[0-9]+$'
-      AND sii.id = NULLIF(ib.source_id, '')::BIGINT
+      AND sii.id = CASE
+        WHEN NULLIF(ib.source_id, '') ~ '^[0-9]+$'
+          THEN NULLIF(ib.source_id, '')::BIGINT
+        ELSE NULL
+      END
       AND (
         COALESCE(sii.cost_price, 0) > 0
         OR COALESCE(sii.mrp, 0) > 0
@@ -390,8 +397,11 @@ export async function allocateBatchStock(
      FROM inventory_batches ib
      LEFT JOIN stock_in_items sii
        ON ib.source_type = 'stock_in'
-      AND NULLIF(ib.source_id, '') ~ '^[0-9]+$'
-      AND sii.id = NULLIF(ib.source_id, '')::BIGINT
+      AND sii.id = CASE
+        WHEN NULLIF(ib.source_id, '') ~ '^[0-9]+$'
+          THEN NULLIF(ib.source_id, '')::BIGINT
+        ELSE NULL
+      END
      WHERE ib.product_id = $1
        AND ib.store_id = $2
        AND ib.status = 'active'

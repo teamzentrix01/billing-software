@@ -35,11 +35,25 @@ export async function ensureStockTransferSchema() {
       stock_transfer_id INTEGER NOT NULL REFERENCES stock_transfer(id) ON DELETE CASCADE,
       product_id INTEGER NOT NULL,
       product_name VARCHAR(255),
+      sku VARCHAR(120),
+      barcode VARCHAR(120),
       qty NUMERIC(14, 3) NOT NULL DEFAULT 1,
       cost_price NUMERIC(14, 2) DEFAULT 0,
+      mrp NUMERIC(18, 9) DEFAULT 0,
+      selling_price NUMERIC(18, 9) DEFAULT 0,
+      destination_mrp NUMERIC(18, 9) DEFAULT 0,
       tax_value NUMERIC(14, 2) DEFAULT 0,
+      meta JSONB DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+
+    ALTER TABLE stock_transfer_items
+      ADD COLUMN IF NOT EXISTS sku VARCHAR(120),
+      ADD COLUMN IF NOT EXISTS barcode VARCHAR(120),
+      ADD COLUMN IF NOT EXISTS mrp NUMERIC(18, 9) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS selling_price NUMERIC(18, 9) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS destination_mrp NUMERIC(18, 9) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS meta JSONB DEFAULT '{}'::jsonb;
 
     CREATE INDEX IF NOT EXISTS idx_stock_transfer_status ON stock_transfer(status);
     CREATE INDEX IF NOT EXISTS idx_stock_transfer_items_transfer_id ON stock_transfer_items(stock_transfer_id);
