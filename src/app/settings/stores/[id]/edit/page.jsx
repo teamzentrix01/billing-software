@@ -34,6 +34,7 @@ const INTERIOR_FIELDS = [
   { key: "cart", label: "Cart" },
 ];
 const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
+const DOCUMENT_UPLOAD_CHUNK_CHARS = 200_000;
 const ALLOWED_DOCUMENT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
 const ALLOWED_DOCUMENT_EXTENSIONS = [".pdf", ".jpg", ".png"];
 
@@ -143,28 +144,54 @@ async function fileToDocument(file) {
 
 async function uploadStoreDocument(storeId, key, document) {
   if (!document) return;
-  const body = new FormData();
-  if (document.file) {
-    body.append("file", document.file, document.name);
-    body.append("name", document.name || document.file.name || key);
-    body.append("type", document.type || document.file.type || "");
-    body.append("size", String(document.size || document.file.size || 0));
-  } else {
-    body.append(
-      "file",
-      new Blob([document.dataUrl || ""], {
-        type: "text/plain",
-      }),
-      document.name || key,
-    );
-    body.append("name", document.name || key);
-    body.append("type", document.type || "");
-    body.append("size", String(document.size || 0));
+  const dataUrl = String(document.dataUrl || "");
+  const base64 = dataUrl.includes(",") ? dataUrl.split(",").pop() : "";
+  if (!base64) {
+    throw new Error(`Failed to upload ${document.name || key}`);
   }
+  const uploadId =
+    globalThis.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const totalChunks = Math.ceil(base64.length / DOCUMENT_UPLOAD_CHUNK_CHARS);
+  const metadata = {
+    name: document.name,
+    type: document.type,
+    size: document.size,
+  };
+
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+    const chunkData = base64.slice(
+      chunkIndex * DOCUMENT_UPLOAD_CHUNK_CHARS,
+      (chunkIndex + 1) * DOCUMENT_UPLOAD_CHUNK_CHARS,
+    );
+    const res = await fetch(`/api/stores/${storeId}/documents/${key}`, {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "chunk",
+        uploadId,
+        chunkIndex,
+        totalChunks,
+        document: metadata,
+        chunkData,
+      }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) {
+      throw new Error(json.message || `Failed to upload ${document.name || key}`);
+    }
+  }
+
   const res = await fetch(`/api/stores/${storeId}/documents/${key}`, {
-    method: "PUT",
+    method: "POST",
     cache: "no-store",
-    body,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "finalize",
+      uploadId,
+      document: metadata,
+    }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || !json.success) {
@@ -676,6 +703,7 @@ export default function EditStorePage() {
                 <DocumentUpload
                   key={field.key}
                   field={field}
+                  storeId={params.id}
                   document={form.documents[field.key]}
                   error={fieldErrors[`documents.${field.key}`]}
                   onChange={(file) => onDocumentChange(field.key, file)}
@@ -847,13 +875,44 @@ function Field({ label, children }) {
   );
 }
 
-function DocumentUpload({ field, document, error, onChange }) {
+function DocumentUpload({ field, storeId, document, error, onChange }) {
   const [showPreview, setShowPreview] = useState(false);
   const [inputKey, setInputKey] = useState(0);
-  const documentType = String(document?.type || "").toLowerCase();
+  const [previewDocument, setPreviewDocument] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  const activeDocument = previewDocument || document;
+  const documentType = String(activeDocument?.type || "").toLowerCase();
   const isPdf = documentType.includes("pdf");
   const isImage = documentType.startsWith("image/");
-  const hasPreview = Boolean(document?.dataUrl);
+  const hasDocument = Boolean(document?.name);
+  const hasPreview = Boolean(activeDocument?.dataUrl);
+
+  const openPreview = async () => {
+    setPreviewError("");
+    if (document?.dataUrl) {
+      setPreviewDocument(document);
+      setShowPreview(true);
+      return;
+    }
+    if (!storeId || !field?.key) return;
+    setPreviewLoading(true);
+    try {
+      const res = await fetch(`/api/stores/${storeId}/documents/${field.key}`, {
+        cache: "no-store",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success || !json.data?.document?.dataUrl) {
+        throw new Error(json.message || "Preview is not available");
+      }
+      setPreviewDocument(json.data.document);
+      setShowPreview(true);
+    } catch (err) {
+      setPreviewError(err.message || "Preview is not available");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
 
   return (
     <>
@@ -888,16 +947,24 @@ function DocumentUpload({ field, document, error, onChange }) {
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              if (hasPreview) setShowPreview((current) => !current);
+              if (showPreview) {
+                setShowPreview(false);
+              } else {
+                openPreview();
+              }
             }}
-            disabled={!hasPreview}
+            disabled={!hasDocument || previewLoading}
             className={`text-xs font-semibold ${
-              hasPreview
+              hasDocument
                 ? "text-blue-700 hover:underline"
                 : "cursor-not-allowed text-gray-400"
             }`}
           >
-            {hasPreview ? (showPreview ? "Hide Preview" : "Show Preview") : "Re-upload to preview"}
+            {previewLoading
+              ? "Loading Preview..."
+              : showPreview
+                ? "Hide Preview"
+                : "Show Preview"}
           </button>
           <button
             type="button"
@@ -905,6 +972,8 @@ function DocumentUpload({ field, document, error, onChange }) {
               e.preventDefault();
               e.stopPropagation();
               setShowPreview(false);
+              setPreviewDocument(null);
+              setPreviewError("");
               setInputKey((current) => current + 1);
               onChange(null);
             }}
@@ -922,8 +991,13 @@ function DocumentUpload({ field, document, error, onChange }) {
           {error}
         </span>
       ) : null}
+      {previewError ? (
+        <span className="mt-1 block text-xs font-medium text-red-600">
+          {previewError}
+        </span>
+      ) : null}
       </label>
-      {showPreview && document?.dataUrl ? (
+      {showPreview && activeDocument?.dataUrl ? (
         <div
           className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4"
           onClick={() => setShowPreview(false)}
@@ -938,7 +1012,7 @@ function DocumentUpload({ field, document, error, onChange }) {
                   {field.label} Preview
                 </h3>
                 <p className="truncate text-xs text-gray-500">
-                  {document.name}
+                  {activeDocument.name}
                 </p>
               </div>
               <button
@@ -952,13 +1026,13 @@ function DocumentUpload({ field, document, error, onChange }) {
             <div className="h-[70vh] bg-gray-50 p-3">
               {isImage ? (
                 <img
-                  src={document.dataUrl}
+                  src={activeDocument.dataUrl}
                   alt={`${field.label} preview`}
                   className="h-full w-full object-contain"
                 />
               ) : isPdf ? (
                 <iframe
-                  src={document.dataUrl}
+                  src={activeDocument.dataUrl}
                   title={`${field.label} preview`}
                   className="h-full w-full rounded border border-gray-200 bg-white"
                 />

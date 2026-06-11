@@ -52,6 +52,7 @@ const INTERIOR_FIELDS = [
   { key: "edcPhonepePay", label: "EDC Machine / PhonePe Pay" },
 ];
 const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
+const DOCUMENT_UPLOAD_CHUNK_CHARS = 200_000;
 const ALLOWED_DOCUMENT_TYPES = ["application/pdf", "image/jpeg", "image/png"];
 const ALLOWED_DOCUMENT_EXTENSIONS = [".pdf", ".jpg", ".png"];
 const PINCODE_CACHE_PREFIX = "store-pincode-location:v2:";
@@ -190,28 +191,54 @@ function getApiErrorMessage(json, fallback = "Failed to create store") {
 
 async function uploadStoreDocument(storeId, key, document) {
   if (!document) return;
-  const body = new FormData();
-  if (document.file) {
-    body.append("file", document.file, document.name);
-    body.append("name", document.name || document.file.name || key);
-    body.append("type", document.type || document.file.type || "");
-    body.append("size", String(document.size || document.file.size || 0));
-  } else {
-    body.append(
-      "file",
-      new Blob([document.dataUrl || ""], {
-        type: "text/plain",
-      }),
-      document.name || key,
-    );
-    body.append("name", document.name || key);
-    body.append("type", document.type || "");
-    body.append("size", String(document.size || 0));
+  const dataUrl = String(document.dataUrl || "");
+  const base64 = dataUrl.includes(",") ? dataUrl.split(",").pop() : "";
+  if (!base64) {
+    throw new Error(`Failed to upload ${document.name || key}`);
   }
+  const uploadId =
+    globalThis.crypto?.randomUUID?.() ||
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const totalChunks = Math.ceil(base64.length / DOCUMENT_UPLOAD_CHUNK_CHARS);
+  const metadata = {
+    name: document.name,
+    type: document.type,
+    size: document.size,
+  };
+
+  for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+    const chunkData = base64.slice(
+      chunkIndex * DOCUMENT_UPLOAD_CHUNK_CHARS,
+      (chunkIndex + 1) * DOCUMENT_UPLOAD_CHUNK_CHARS,
+    );
+    const res = await fetch(`/api/stores/${storeId}/documents/${key}`, {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "chunk",
+        uploadId,
+        chunkIndex,
+        totalChunks,
+        document: metadata,
+        chunkData,
+      }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) {
+      throw new Error(json.message || `Failed to upload ${document.name || key}`);
+    }
+  }
+
   const res = await fetch(`/api/stores/${storeId}/documents/${key}`, {
-    method: "PUT",
+    method: "POST",
     cache: "no-store",
-    body,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "finalize",
+      uploadId,
+      document: metadata,
+    }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || !json.success) {

@@ -35,6 +35,13 @@ function documentName(doc) {
   return doc?.name || "";
 }
 
+const DOCUMENT_FIELDS = [
+  { key: "agreement", label: "Agreement" },
+  { key: "aadhaar", label: "Aadhaar" },
+  { key: "panCard", label: "PAN Card" },
+  { key: "rentAgreement", label: "Electricity Bill / Rent Agreement" },
+];
+
 const INTERIOR_LABELS = {
   ac: "AC",
   refrigerator: "Refrigerator",
@@ -72,6 +79,10 @@ export default function StoreDetailsPage() {
   const [store, setStore] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [previewDocument, setPreviewDocument] = useState(null);
+  const [previewLabel, setPreviewLabel] = useState("");
+  const [previewLoadingKey, setPreviewLoadingKey] = useState("");
+  const [previewError, setPreviewError] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -95,6 +106,26 @@ export default function StoreDetailsPage() {
       mounted = false;
     };
   }, [params.id]);
+
+  const openDocumentPreview = async (field) => {
+    setPreviewError("");
+    setPreviewLoadingKey(field.key);
+    try {
+      const res = await fetch(`/api/stores/${params.id}/documents/${field.key}`, {
+        cache: "no-store",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success || !json.data?.document?.dataUrl) {
+        throw new Error(json.message || "Preview is not available");
+      }
+      setPreviewDocument(json.data.document);
+      setPreviewLabel(field.label);
+    } catch (err) {
+      setPreviewError(err.message || "Preview is not available");
+    } finally {
+      setPreviewLoadingKey("");
+    }
+  };
 
   return (
     <MainLayout>
@@ -234,17 +265,42 @@ export default function StoreDetailsPage() {
             <h3 className="mb-4 text-[15px] font-semibold text-blue-700">
               Franchise Documents
             </h3>
-            <InfoGrid
-              items={[
-                ["Agreement", documentName(store.meta?.documents?.agreement)],
-                ["Aadhaar", documentName(store.meta?.documents?.aadhaar)],
-                ["PAN Card", documentName(store.meta?.documents?.panCard)],
-                [
-                  "Electricity Bill / Rent Agreement",
-                  documentName(store.meta?.documents?.rentAgreement),
-                ],
-              ]}
-            />
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {DOCUMENT_FIELDS.map((field) => {
+                const document = store.meta?.documents?.[field.key];
+                const name = documentName(document);
+                return (
+                  <div
+                    key={field.key}
+                    className="rounded-lg border border-gray-200 bg-white p-4"
+                  >
+                    <div className="text-[12px] font-medium text-gray-500">
+                      {field.label}
+                    </div>
+                    <div className="mt-1 min-h-[1.25rem] break-words text-sm font-semibold text-gray-900">
+                      {name || "-"}
+                    </div>
+                    {name ? (
+                      <button
+                        type="button"
+                        onClick={() => openDocumentPreview(field)}
+                        disabled={previewLoadingKey === field.key}
+                        className="mt-3 text-xs font-semibold text-blue-700 hover:underline disabled:text-gray-400"
+                      >
+                        {previewLoadingKey === field.key
+                          ? "Loading Preview..."
+                          : "Show Preview"}
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+            {previewError ? (
+              <p className="mt-3 text-sm font-medium text-red-600">
+                {previewError}
+              </p>
+            ) : null}
           </section>
 
           <section className="rounded-xl border border-gray-200 bg-gray-50 p-5">
@@ -316,6 +372,69 @@ export default function StoreDetailsPage() {
           </section>
         </div>
       ) : null}
+      {previewDocument?.dataUrl ? (
+        <DocumentPreviewModal
+          label={previewLabel}
+          document={previewDocument}
+          onClose={() => {
+            setPreviewDocument(null);
+            setPreviewLabel("");
+          }}
+        />
+      ) : null}
     </MainLayout>
+  );
+}
+
+function DocumentPreviewModal({ label, document, onClose }) {
+  const documentType = String(document?.type || "").toLowerCase();
+  const isPdf = documentType.includes("pdf");
+  const isImage = documentType.startsWith("image/");
+
+  return (
+    <div
+      className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-4xl overflow-hidden rounded-lg bg-white shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-sm font-bold text-gray-900">
+              {label} Preview
+            </h3>
+            <p className="truncate text-xs text-gray-500">{document.name}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+          >
+            Hide Preview
+          </button>
+        </div>
+        <div className="h-[70vh] bg-gray-50 p-3">
+          {isImage ? (
+            <img
+              src={document.dataUrl}
+              alt={`${label} preview`}
+              className="h-full w-full object-contain"
+            />
+          ) : isPdf ? (
+            <iframe
+              src={document.dataUrl}
+              title={`${label} preview`}
+              className="h-full w-full rounded border border-gray-200 bg-white"
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-gray-500">
+              Preview is not available for this file.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
