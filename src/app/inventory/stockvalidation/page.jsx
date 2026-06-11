@@ -318,6 +318,7 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [cartFilter, setCartFilter] = useState('');
   const [products, setProducts] = useState([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
   const [cart, setCart] = useState([]);
   const [form, setForm] = useState({
     invoice_date: '',
@@ -345,27 +346,29 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
   }, [id]);
 
   useEffect(() => {
-    if (!searchTerm.trim()) {
+    const destinationId = draft?.destination;
+    if (!destinationId || destinationId === 'none') {
       setProducts([]);
+      setLoadingProducts(false);
       return;
     }
 
     const timer = setTimeout(() => {
+      setLoadingProducts(true);
       const params = new URLSearchParams({
-        search: searchTerm,
-        pageSize: '20',
+        search: searchTerm.trim(),
+        pageSize: searchTerm.trim() ? '50' : '500',
         batch_variants: 'true',
+        store_id: String(destinationId),
       });
-      if (draft?.destination && draft.destination !== 'none') {
-        params.set('store_id', String(draft.destination));
-      }
       fetch(`/api/inventory/products?${params.toString()}`)
         .then((res) => res.json())
         .then((res) => {
           const records = res?.data?.records ?? res?.records ?? [];
           setProducts(records);
         })
-        .catch(() => setProducts([]));
+        .catch(() => setProducts([]))
+        .finally(() => setLoadingProducts(false));
     }, 300);
 
     return () => clearTimeout(timer);
@@ -420,7 +423,6 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
       ];
     });
     setSearchTerm('');
-    setProducts([]);
   };
 
   const updateQty = (itemKey, qty) => {
@@ -566,7 +568,11 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
               </div>
 
               <div className="flex-1 overflow-auto p-4">
-                {searchTerm.trim() && products.length > 0 && (
+                {loadingProducts && (
+                  <p className="py-8 text-center text-[13px] text-gray-500">Loading products...</p>
+                )}
+
+                {!loadingProducts && products.length > 0 && (
                   <div className="mb-4 divide-y divide-gray-100 rounded-lg border border-gray-100">
                     {products.map((product) => (
                       <button
@@ -590,7 +596,7 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                   </div>
                 )}
 
-                {searchTerm.trim() && products.length === 0 && !loading && (
+                {!loadingProducts && products.length === 0 && !loading && draft?.destination && draft.destination !== 'none' && (
                   <p className="py-8 text-center text-[13px] text-gray-500">No products found</p>
                 )}
 
@@ -661,7 +667,7 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                     </tbody>
                   </table>
                 ) : (
-                  !searchTerm.trim() && <div className="min-h-[240px]" />
+                  products.length === 0 && !loadingProducts && <div className="min-h-[240px]" />
                 )}
               </div>
             </section>
