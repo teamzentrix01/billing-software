@@ -21,7 +21,26 @@ function normalizeDate(value) {
   return toDateInputValue(value) || null;
 }
 
+function hasPermission(user, ...permissions) {
+  const userPerms = Array.isArray(user?.permissions) ? user.permissions : [];
+  return (
+    user?.role === 'super_admin' ||
+    user?.system_role === 'super_admin' ||
+    userPerms.includes('*') ||
+    permissions.some((permission) => userPerms.includes(permission))
+  );
+}
+
+function canApproveRemoteGrn(user) {
+  return hasPermission(user, 'APPROVE_REMOTE_GRN', 'MANAGE_PURCHASE_ORDERS');
+}
+
+function canViewRemoteGrnCosting(user) {
+  return hasPermission(user, 'VIEW_REMOTE_GRN_COSTING', 'APPROVE_REMOTE_GRN', 'MANAGE_PURCHASE_ORDERS');
+}
+
 function mapItem(item) {
+  const meta = item.meta || {};
   return {
     id: item.id,
     productId: item.product_id ?? item.productId,
@@ -32,12 +51,12 @@ function mapItem(item) {
     taxRate: toNumber(item.tax_rate ?? item.taxRate ?? item.meta?.taxRate),
     mrp: toNumber(item.mrp),
     sellingPrice: toNumber(item.selling_price ?? item.sellingPrice),
-    batchNo: item.batch_no ?? item.batchNo ?? '',
-    mfgDate: item.mfg_date ?? item.mfgDate ?? '',
-    expiryDate: item.expiry_date ?? item.expiryDate ?? '',
+    batchNo: item.batch_no ?? item.batchNo ?? meta.batchNo ?? meta.batch_no ?? '',
+    mfgDate: normalizeDate(item.mfg_date ?? item.mfgDate ?? meta.mfgDate ?? meta.mfg_date) || '',
+    expiryDate: normalizeDate(item.expiry_date ?? item.expiryDate ?? meta.expiryDate ?? meta.expiry_date) || '',
     serialNumber: item.serial_number ?? item.serialNumber ?? '',
     scanCode: item.scan_code ?? item.scanCode ?? '',
-    meta: item.meta || {},
+    meta,
   };
 }
 
@@ -124,8 +143,10 @@ export async function GET(request) {
 
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
-    const permissionCheck = requirePermission(auth.user, 'MANAGE_PURCHASE_ORDERS', 'MANAGE_VENDORS');
+    const permissionCheck = requirePermission(auth.user, 'VIEW_REMOTE_GRN', 'CREATE_REMOTE_GRN', 'APPROVE_REMOTE_GRN', 'MANAGE_PURCHASE_ORDERS', 'MANAGE_VENDORS');
     if (permissionCheck.error) return permissionCheck.error;
+    const canApprove = canApproveRemoteGrn(auth.user);
+    const canViewCosting = canViewRemoteGrnCosting(auth.user);
 
     const { searchParams } = new URL(request.url);
     const scan = searchParams.get('scan');
@@ -140,6 +161,10 @@ export async function GET(request) {
       const product = await lookupProduct(scan, storeId);
       if (!product) return NextResponse.json({ error: 'Product not found in master' }, { status: 404 });
       if (product.ambiguous) return NextResponse.json({ error: product.message }, { status: 409 });
+      if (!canViewCosting) {
+        product.costPrice = product.mrp;
+        product.sellingPrice = product.mrp;
+      }
       return NextResponse.json({ product });
     }
 
@@ -154,6 +179,7 @@ export async function GET(request) {
       );
       const row = res.rows[0];
       if (!row) return NextResponse.json({ error: 'Remote GRN not found' }, { status: 404 });
+      if (!canApprove) return NextResponse.json({ error: 'Only approvers can open Remote GRN drafts' }, { status: 403 });
       const storeCheck = requireStore(auth.user, row.destination_id);
       if (storeCheck.error) return storeCheck.error;
 
@@ -199,6 +225,10 @@ export async function GET(request) {
           barcode: item.barcode || '',
         })),
       });
+    }
+
+    if (!canApprove) {
+      return NextResponse.json({ records: [] });
     }
 
     const params = [];
@@ -263,7 +293,7 @@ export async function PUT(request) {
 
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
-    const permissionCheck = requirePermission(auth.user, 'MANAGE_PURCHASE_ORDERS');
+    const permissionCheck = requirePermission(auth.user, 'APPROVE_REMOTE_GRN', 'MANAGE_PURCHASE_ORDERS');
     if (permissionCheck.error) return permissionCheck.error;
 
     const body = await request.json();
@@ -388,6 +418,8 @@ export async function PUT(request) {
             source: 'remote_grn',
             scanCode: item.scanCode,
             serialNumber: item.serialNumber,
+            batchNo: item.batchNo,
+            expiryDate: item.expiryDate,
             taxRate: item.taxRate,
           }),
         ]
@@ -414,8 +446,9 @@ export async function POST(request) {
 
     const auth = await requireAuth(request);
     if (auth.error) return auth.error;
-    const permissionCheck = requirePermission(auth.user, 'MANAGE_PURCHASE_ORDERS');
+    const permissionCheck = requirePermission(auth.user, 'CREATE_REMOTE_GRN', 'APPROVE_REMOTE_GRN', 'MANAGE_PURCHASE_ORDERS');
     if (permissionCheck.error) return permissionCheck.error;
+    const canApprove = canApproveRemoteGrn(auth.user);
 
     const body = await request.json();
     const destinationId = Number(body.destinationId || body.destination || body.storeId || 0) || null;
@@ -479,7 +512,7 @@ export async function POST(request) {
          total_items, total_cost, total_tax, reference_type, reference_id,
          remarks, meta, created_at
        ) VALUES (
-         'remote_grn', $1, true, false, 'draft',
+         'remote_grn', $1, true, false, $12,
          $2, $3, $4, $5, $6,
          $7, $8, $9, 'remote_grn', NULL,
          $10, $11::jsonb, NOW()
@@ -501,8 +534,10 @@ export async function POST(request) {
           sourceType: 'vendor',
           createdFrom: 'barcode_scan',
           createdBy: auth.user?.id || null,
+          submittedForApproval: !canApprove,
           clientMeta: body.meta || {},
         }),
+        canApprove ? 'draft' : 'pending_approval',
       ]
     );
 
@@ -539,6 +574,9 @@ export async function POST(request) {
             source: 'remote_grn',
             scanCode: item.scanCode,
             serialNumber: item.serialNumber,
+            batchNo: item.batchNo,
+            mfgDate: item.mfgDate,
+            expiryDate: item.expiryDate,
             taxRate: item.taxRate,
           }),
         ]

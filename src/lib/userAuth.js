@@ -47,6 +47,15 @@ export async function ensureUsersTable() {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           UNIQUE(user_id, store_id)
         );
+
+        DELETE FROM user_stores a
+        USING user_stores b
+        WHERE a.id > b.id
+          AND a.user_id = b.user_id
+          AND a.store_id = b.store_id;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS user_stores_user_id_store_id_unique_idx
+          ON user_stores (user_id, store_id);
       `);
 
       const superAdminEmail = normalizeEmail(SUPER_ADMIN_EMAIL);

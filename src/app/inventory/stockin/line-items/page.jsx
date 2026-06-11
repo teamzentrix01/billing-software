@@ -984,7 +984,7 @@ function LineItemsContent() {
                 </div>
               </div>
 
-              <div className="flex-1 p-4 overflow-auto">
+              <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4">
                 {sourceType === "vendor" && selectedVendorIds.length === 0 && (
                   <div className="mb-4 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center">
                     <p className="text-[13px] font-medium text-gray-700">
@@ -1005,13 +1005,13 @@ function LineItemsContent() {
                 ) : null}
 
                 {products.length > 0 && (
-                  <div className="mb-4 overflow-hidden rounded-lg border border-gray-100">
+                  <div className="flex-shrink-0 overflow-hidden rounded-lg border border-gray-100">
                     <div className="border-b border-gray-100 bg-gray-50 px-4 py-2">
                       <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500">
                         Available Products ({products.length})
                       </p>
                     </div>
-                    <div className="divide-y divide-gray-100">
+                    <div className="max-h-[260px] divide-y divide-gray-100 overflow-y-auto">
                       {products.map((p) => (
                         <button
                           key={p.id}
@@ -1081,7 +1081,7 @@ function LineItemsContent() {
 
                 {filteredCart.length > 0 ? (
                   isWarehouseDestination ? (
-                    <div className="space-y-3">
+                    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-lg border border-gray-100 p-2">
                       {filteredCart.map((it) => (
                         <div
                           key={it.line_id}
@@ -1203,6 +1203,7 @@ function LineItemsContent() {
                       ))}
                     </div>
                   ) : (
+                    <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-100">
                     <table className="w-full">
                       <thead>
                         <tr className="border-b border-gray-100">
@@ -1302,6 +1303,7 @@ function LineItemsContent() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   )
                 ) : (
                   !searchTerm.trim() && <div className="min-h-[400px]" />

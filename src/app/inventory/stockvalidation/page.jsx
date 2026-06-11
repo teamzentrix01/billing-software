@@ -2,8 +2,18 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import InventoryShell from '@/components/inventory/InventoryShell';
-import { getBulkField, parseBulkSheet, pickSpreadsheetFile, toBoolean } from '@/lib/bulkSheet';
+import { getBulkField, parseBulkSheet, pickSpreadsheetFile } from '@/lib/bulkSheet';
 import { formatIndianDate } from '@/lib/dateUtils';
+import {
+  addOptionNamedRanges,
+  applyTextFormatToColumns,
+  buildOptionsSheet,
+  hideOptionsSheet,
+  optionFormula,
+  saveWorkbookWithValidations,
+  sortOptions,
+  uniqueOptions,
+} from '@/lib/xlsxDropdowns';
 
 async function fetchStores() {
   const res = await fetch('/api/stores');
@@ -38,6 +48,17 @@ const tableHeaders = [
   'Cost',
 ];
 
+const BULK_HEADERS = [
+  'Destination',
+  'Barcode',
+  'SKU',
+  'Product Name',
+  'Batch No',
+  'Physical Qty',
+  'Remarks',
+];
+const BULK_TEMPLATE_ROW_LIMIT = 500;
+
 function formatDate(value) {
   return formatIndianDate(value, '-');
 }
@@ -52,6 +73,29 @@ function formatCurrency(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function normalizeText(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function toQty(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.round(parsed * 1000) / 1000;
+}
+
+function parseDestinationId(value, stores = []) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const leadingId = Number(raw.match(/^\d+/)?.[0] || 0);
+  if (leadingId) return leadingId;
+  const match = stores.find((store) => normalizeText(store.name) === normalizeText(raw));
+  return match ? Number(match.id) : null;
+}
+
+function formatDestinationOption(store) {
+  return `${store.id} - ${store.name}`;
 }
 
 function getValidationItemKey(item) {
@@ -82,6 +126,10 @@ export default function StockValidationPage() {
   const [tableData, setTableData] = useState([]);
   const [draftId, setDraftId] = useState(null);
   const [listFilters, setListFilters] = useState({ dateFrom: '', dateTo: '', source: '' });
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkPreview, setBulkPreview] = useState([]);
+  const [bulkIssue, setBulkIssue] = useState('');
 
   const visibleTableData = useMemo(() => {
     return tableData.filter((row) => {
@@ -125,42 +173,247 @@ export default function StockValidationPage() {
     setShowModal(true);
   };
 
+  const ensureStoresLoaded = async () => {
+    if (stores.length) return stores;
+    const data = await fetchStores();
+    const list = Array.isArray(data) ? data : [];
+    setStores(list);
+    return list;
+  };
+
+  const openBulkModal = async () => {
+    setBulkOpen(true);
+    setBulkIssue('');
+    setBulkPreview([]);
+    try {
+      await ensureStoresLoaded();
+    } catch {
+      setBulkIssue('Failed to load destinations. Try again.');
+    }
+  };
+
+  const downloadBulkTemplate = async () => {
+    setBulkBusy(true);
+    try {
+      const storeList = await ensureStoresLoaded();
+      const XLSX = await import('xlsx');
+      const rows = [BULK_HEADERS, ...Array.from({ length: 25 }, () => Array(BULK_HEADERS.length).fill(''))];
+      const worksheet = XLSX.utils.aoa_to_sheet(rows);
+      worksheet['!cols'] = [
+        { wch: 34 },
+        { wch: 22 },
+        { wch: 18 },
+        { wch: 32 },
+        { wch: 18 },
+        { wch: 14 },
+        { wch: 32 },
+      ];
+      applyTextFormatToColumns(worksheet, BULK_HEADERS, ['Barcode', 'SKU', 'Batch No'], BULK_TEMPLATE_ROW_LIMIT + 1);
+
+      const optionGroups = [{
+        key: 'Destinations',
+        name: 'Destinations',
+        values: sortOptions(uniqueOptions(storeList.map(formatDestinationOption))),
+      }];
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Stock Validation');
+      XLSX.utils.book_append_sheet(workbook, buildOptionsSheet(optionGroups), 'Options');
+      addOptionNamedRanges(workbook, optionGroups);
+      hideOptionsSheet(workbook);
+
+      await saveWorkbookWithValidations(
+        workbook,
+        `stock-validation-bulk-template-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        [
+          {
+            range: `A2:A${BULK_TEMPLATE_ROW_LIMIT}`,
+            formula: optionFormula(optionGroups, 'Destinations'),
+            promptTitle: 'Destination',
+            prompt: 'Select store or warehouse to audit.',
+            errorTitle: 'Invalid destination',
+            error: 'Select a destination from the dropdown.',
+          },
+        ],
+        'xl/worksheets/sheet1.xml',
+        { quotePrefixRanges: [`B2:C${BULK_TEMPLATE_ROW_LIMIT}`, `E2:E${BULK_TEMPLATE_ROW_LIMIT}`] }
+      );
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to download stock validation template');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const fetchDestinationProducts = async (destinationId) => {
+    const params = new URLSearchParams({
+      pageSize: '5000',
+      batch_variants: 'true',
+      store_id: String(destinationId),
+    });
+    const res = await fetch(`/api/inventory/products?${params.toString()}`, { cache: 'no-store' });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.message || json.error || 'Failed to fetch destination products');
+    return json?.data?.records ?? json?.records ?? [];
+  };
+
+  const matchBulkProduct = (row, products) => {
+    const barcode = normalizeText(getBulkField(row, ['barcode']));
+    const sku = normalizeText(getBulkField(row, ['sku']));
+    const productName = normalizeText(getBulkField(row, ['product_name', 'product']));
+    const batchNo = normalizeText(getBulkField(row, ['batch_no', 'batch']));
+
+    const candidates = products.filter((product) => {
+      const identityMatches =
+        (barcode && normalizeText(product.barcode) === barcode) ||
+        (sku && normalizeText(product.sku) === sku) ||
+        (productName && normalizeText(product.name) === productName);
+      if (!identityMatches) return false;
+      if (!batchNo) return true;
+      return normalizeText(product.batchNo || product.batch_no) === batchNo;
+    });
+
+    if (candidates.length === 1) return { product: candidates[0] };
+    if (candidates.length > 1) {
+      return { error: 'Multiple matching batches found. Fill Batch No in the sheet.' };
+    }
+    return { error: 'Product not found in selected destination stock.' };
+  };
+
   const handleBulkImport = async () => {
     try {
+      setBulkBusy(true);
+      setBulkIssue('');
       const file = await pickSpreadsheetFile();
       if (!file) return;
 
+      const storeList = await ensureStoresLoaded();
       const rows = await parseBulkSheet(file);
       if (!rows.length) {
-        alert('No rows found in selected file.');
+        setBulkIssue('No rows found in selected file.');
         return;
       }
 
-      const created = [];
-      let failed = 0;
+      const productCache = new Map();
+      const preview = [];
 
-      for (const row of rows) {
-        try {
-          const draft = await postValidation({
-            destination: String(getBulkField(row, ['destination_id', 'destination'], 'none')),
-            applyTaxes: toBoolean(getBulkField(row, ['apply_taxes']), true),
-          });
-          created.push(draft);
-        } catch {
-          failed += 1;
+      for (const row of rows.slice(0, 1000)) {
+        const rowNumber = Number(row.__row_index || 0) + 2;
+        const destinationRaw = getBulkField(row, ['destination', 'store', 'warehouse']);
+        const destinationId = parseDestinationId(destinationRaw, storeList);
+        const physicalQty = toQty(getBulkField(row, ['physical_qty', 'qty', 'counted_qty']));
+        const remarks = String(getBulkField(row, ['remarks'], '') || '').trim();
+
+        if (!destinationId) {
+          preview.push({ rowNumber, status: 'error', error: 'Destination is required or invalid.', raw: row });
+          continue;
         }
+        if (!productCache.has(destinationId)) {
+          productCache.set(destinationId, await fetchDestinationProducts(destinationId));
+        }
+        const products = productCache.get(destinationId) || [];
+        const match = matchBulkProduct(row, products);
+        if (match.error) {
+          preview.push({
+            rowNumber,
+            status: 'error',
+            destinationId,
+            destinationName: storeList.find((store) => Number(store.id) === Number(destinationId))?.name || destinationRaw,
+            error: match.error,
+            raw: row,
+          });
+          continue;
+        }
+
+        const product = match.product;
+        const existingQty = toQty(product.existingQty ?? product.availableStock);
+        const variance = Math.round((physicalQty - existingQty) * 1000) / 1000;
+        preview.push({
+          rowNumber,
+          status: 'ready',
+          destinationId,
+          destinationName: storeList.find((store) => Number(store.id) === Number(destinationId))?.name || destinationRaw,
+          product_id: product.id ?? product.product_id,
+          batch_id: product.batchId || product.batch_id || null,
+          batch_no: product.batchNo || product.batch_no || '',
+          name: product.name,
+          sku: product.sku,
+          barcode: product.barcode,
+          existing_qty: existingQty,
+          qty: String(physicalQty),
+          variance,
+          cost_price: Number(product.cost_price || 0),
+          mrp: Number(product.mrp || 0),
+          selling_price: Number(product.selling_price || product.sellingPrice || product.mrp || 0),
+          tax_value: 0,
+          remarks,
+          variantKey: product.variantKey || `${product.id}:batch:${product.batchId || product.batch_id || 'stock'}`,
+        });
       }
 
-      if (!created.length) {
-        alert('Could not import any row. Check destination_id column.');
-        return;
+      setBulkPreview(preview);
+      if (!preview.some((row) => row.status === 'ready')) {
+        setBulkIssue('No valid rows found. Check destination, barcode/SKU/product name, batch, and physical qty.');
       }
-
-      alert(`Bulk import complete: ${created.length} draft(s) created${failed ? `, ${failed} failed` : ''}. Opening the first draft.`);
-      setDraftId(created[0].id);
     } catch (err) {
       console.error(err);
-      alert('Bulk import failed. Please use a valid Excel/CSV file.');
+      setBulkIssue(err.message || 'Bulk import failed. Please use a valid Excel/CSV file.');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const confirmBulkAudit = async () => {
+    const readyRows = bulkPreview.filter((row) => row.status === 'ready');
+    if (!readyRows.length) {
+      setBulkIssue('No valid rows to confirm.');
+      return;
+    }
+
+    setBulkBusy(true);
+    setBulkIssue('');
+    try {
+      const groups = new Map();
+      readyRows.forEach((row) => {
+        const key = String(row.destinationId);
+        groups.set(key, [...(groups.get(key) || []), row]);
+      });
+
+      let confirmed = 0;
+      for (const [destinationId, rows] of groups.entries()) {
+        const draft = await postValidation({
+          destination: destinationId,
+          applyTaxes: true,
+          meta: { bulkValidation: true },
+        });
+
+        const res = await fetch(`/api/inventory/stockvalidation/${encodeURIComponent(draft.id)}/confirm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            form: {
+              invoice_date: new Date().toISOString().slice(0, 10),
+              invoice_number: '',
+              other_charges: 0,
+              remarks: 'Created from bulk stock validation template',
+            },
+            items: rows,
+          }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || `Failed to confirm audit for destination ${destinationId}`);
+        confirmed += rows.length;
+      }
+
+      alert(`Bulk stock validation confirmed for ${confirmed} product row(s).`);
+      setBulkOpen(false);
+      setBulkPreview([]);
+      loadList();
+    } catch (err) {
+      console.error(err);
+      setBulkIssue(err.message || 'Failed to confirm bulk audit.');
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -184,7 +437,7 @@ export default function StockValidationPage() {
         breadcrumb={[{ label: 'Inventory' }, { label: 'Stock Validation' }]}
         title="Stock Validation"
         subtitle="Stock Validation transaction history of last 7 days. Need Help?"
-        actions={[{ label: 'Audit In Bulk (Excel)', onClick: handleBulkImport }, { label: 'Audit', primary: true, onClick: openModal }]}
+        actions={[{ label: 'Audit In Bulk (Excel)', onClick: openBulkModal }, { label: 'Audit', primary: true, onClick: openModal }]}
         searchPlaceholder="Search"
         filters={(
           <>
@@ -223,6 +476,103 @@ export default function StockValidationPage() {
         tableData={loadingList ? [] : visibleTableData}
         emptyMessage={loadingList ? 'Loading records...' : 'No Records Found'}
       />
+
+      {bulkOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 px-4">
+          <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+              <div>
+                <h3 className="text-lg font-black text-slate-950">Bulk Stock Validation</h3>
+                <p className="mt-1 text-xs font-semibold text-slate-500">Download blank template, fill physical qty, upload, preview, then confirm audit.</p>
+              </div>
+              <button type="button" onClick={() => setBulkOpen(false)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">
+                <i className="ti ti-x text-[18px]" />
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 px-6 py-4">
+              <button
+                type="button"
+                onClick={downloadBulkTemplate}
+                disabled={bulkBusy}
+                className="rounded-lg border border-red-200 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-50 disabled:opacity-50"
+              >
+                Download Template
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkImport}
+                disabled={bulkBusy}
+                className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-800 disabled:opacity-50"
+              >
+                {bulkBusy ? 'Working...' : 'Upload Filled Sheet'}
+              </button>
+              <button
+                type="button"
+                onClick={confirmBulkAudit}
+                disabled={bulkBusy || !bulkPreview.some((row) => row.status === 'ready')}
+                className="ml-auto rounded-lg bg-blue-700 px-4 py-2 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-50"
+              >
+                Confirm Audit
+              </button>
+            </div>
+
+            {bulkIssue && (
+              <div className="mx-6 mt-4 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                {bulkIssue}
+              </div>
+            )}
+
+            <div className="min-h-[360px] overflow-auto p-6">
+              {bulkPreview.length ? (
+                <table className="min-w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                    <tr>
+                      <th className="px-3 py-3">Row</th>
+                      <th className="px-3 py-3">Status</th>
+                      <th className="px-3 py-3">Destination</th>
+                      <th className="px-3 py-3">Product</th>
+                      <th className="px-3 py-3">Batch</th>
+                      <th className="px-3 py-3">System Qty</th>
+                      <th className="px-3 py-3">Physical Qty</th>
+                      <th className="px-3 py-3">Difference</th>
+                      <th className="px-3 py-3">Message</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {bulkPreview.map((row) => (
+                      <tr key={`${row.rowNumber}-${row.destinationId || 'x'}-${row.product_id || row.error}`} className={row.status === 'error' ? 'bg-red-50/60' : ''}>
+                        <td className="px-3 py-3 font-semibold">{row.rowNumber}</td>
+                        <td className="px-3 py-3">
+                          <span className={`rounded-full px-2 py-1 text-xs font-bold ${row.status === 'ready' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                            {row.status === 'ready' ? 'Ready' : 'Error'}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3">{row.destinationName || '-'}</td>
+                        <td className="px-3 py-3">
+                          <div className="font-bold text-slate-900">{row.name || '-'}</div>
+                          <div className="text-xs text-slate-500">{row.sku || row.barcode || ''}</div>
+                        </td>
+                        <td className="px-3 py-3">{row.batch_no || '-'}</td>
+                        <td className="px-3 py-3">{row.status === 'ready' ? row.existing_qty : '-'}</td>
+                        <td className="px-3 py-3">{row.status === 'ready' ? row.qty : '-'}</td>
+                        <td className={`px-3 py-3 font-bold ${Number(row.variance || 0) < 0 ? 'text-red-700' : Number(row.variance || 0) > 0 ? 'text-emerald-700' : 'text-slate-700'}`}>
+                          {row.status === 'ready' ? row.variance : '-'}
+                        </td>
+                        <td className="px-3 py-3 text-red-700">{row.error || row.remarks || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="flex min-h-[300px] items-center justify-center rounded-lg border border-dashed border-slate-300 text-sm font-semibold text-slate-400">
+                  Download the blank template and upload filled sheet to preview audit rows.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
@@ -381,9 +731,9 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
   const totals = cart.reduce(
     (acc, item) => {
       const qty = Number(item.qty || 0);
-      const cost = Number(item.cost_price || 0);
+      const mrp = Number(item.mrp || 0);
       acc.totalItems += qty;
-      acc.totalCost += qty * cost;
+      acc.totalCost += qty * mrp;
       acc.totalTax += Number(item.tax_value || 0) * qty;
       return acc;
     },
@@ -573,13 +923,13 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-auto p-4">
+              <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
                 {loadingProducts && (
                   <p className="py-8 text-center text-[13px] text-gray-500">Loading products...</p>
                 )}
 
                 {!loadingProducts && products.length > 0 && (
-                  <div className="mb-4 divide-y divide-gray-100 rounded-lg border border-gray-100">
+                  <div className="max-h-[240px] shrink-0 divide-y divide-gray-100 overflow-y-auto rounded-lg border border-gray-100">
                     {products.map((product) => (
                       <button
                         key={product.variantKey || `${product.id}-${product.batchId || product.batch_id || ''}`}
@@ -593,7 +943,7 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                             SKU: {product.sku || '-'} · Existing: {Number(product.existingQty ?? product.availableStock ?? 0)}
                           </div>
                           <div className="text-[11px] text-gray-500">
-                            MRP: {formatCurrency(product.mrp)} · Selling: {formatCurrency(product.selling_price || product.sellingPrice || product.mrp)} · Cost: {formatCurrency(product.cost_price)}{product.batchNo || product.batch_no ? ` · Batch: ${product.batchNo || product.batch_no}` : ''}
+                            MRP: {formatCurrency(product.mrp)}{product.batchNo || product.batch_no ? ` · Batch: ${product.batchNo || product.batch_no}` : ''}
                           </div>
                         </div>
                         <span className="text-[12px] font-medium text-blue-600">Add</span>
@@ -607,6 +957,7 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                 )}
 
                 {filteredCart.length > 0 ? (
+                  <div className="min-h-[220px] flex-1 overflow-auto rounded-lg border border-gray-100">
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-gray-100">
@@ -615,7 +966,6 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Qty</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">MRP</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Selling</th>
-                        <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Cost</th>
                         <th className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">Tax</th>
                         <th className="w-10" />
                       </tr>
@@ -660,7 +1010,6 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                           </td>
                           <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.mrp)}</td>
                           <td className="px-2 py-3 text-[13px] font-semibold text-red-700">{formatCurrency(item.selling_price)}</td>
-                          <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.cost_price)}</td>
                           <td className="px-2 py-3 text-[13px] text-gray-700">{formatCurrency(item.tax_value)}</td>
                           <td className="px-2 py-3">
                             <button
@@ -676,6 +1025,7 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                       })}
                     </tbody>
                   </table>
+                  </div>
                 ) : (
                   products.length === 0 && !loadingProducts && <div className="min-h-[240px]" />
                 )}
@@ -691,7 +1041,7 @@ function ValidationLineItemsWindow({ id, onClose, onConfirmed }) {
                 Total Items: <strong className="font-semibold text-gray-900">{totals.totalItems}</strong>
               </span>
               <span className="text-[13px] text-gray-600">
-                Total Cost: <strong className="font-semibold text-gray-900">{formatCurrency(totals.totalCost)}</strong>
+                Total MRP: <strong className="font-semibold text-gray-900">{formatCurrency(totals.totalCost)}</strong>
               </span>
               <span className="text-[13px] text-gray-600">
                 Total Tax Value: <strong className="font-semibold text-gray-900">{formatCurrency(totals.totalTax)}</strong>

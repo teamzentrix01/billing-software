@@ -47,16 +47,43 @@ async function fetchCatalogProducts({ search, pageSize, vendorIds = [], brandId 
       COALESCE(p.name, '') ILIKE $${params.length}
       OR COALESCE(p.sku, '') ILIKE $${params.length}
       OR COALESCE(p.barcode, '') ILIKE $${params.length}
-      OR COALESCE(p.product_id, '') ILIKE $${params.length}
+      OR COALESCE(p.product_id::text, '') ILIKE $${params.length}
     )`);
   }
   addBrandFilter(filters, params, { brandId, brandName });
+
+  const vendorIdParam = vendorIds.length ? params.length + 1 : null;
+  if (vendorIds.length) {
+    params.push(vendorIds);
+    filters.push(`(
+      EXISTS (
+        SELECT 1
+        FROM vendor_brands vb
+        WHERE vb.vendor_id = ANY($${vendorIdParam}::int[])
+          AND vb.brand_id = p.brand_id
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM stock_in_items sii_vendor
+        INNER JOIN stock_in si_vendor ON si_vendor.id = sii_vendor.stock_in_id
+        WHERE sii_vendor.product_id = p.id
+          AND si_vendor.status = 'confirmed'
+          AND si_vendor.vendor_id = ANY($${vendorIdParam}::int[])
+      )
+      OR NOT EXISTS (
+        SELECT 1
+        FROM vendor_brands vb_any
+        WHERE vb_any.vendor_id = ANY($${vendorIdParam}::int[])
+      )
+    )`);
+  }
+
   params.push(pageSize);
+  const limitParam = params.length;
 
   const vendorNameSelect = vendorIds.length
-    ? `(SELECT STRING_AGG(DISTINCT v.name, ', ') FROM vendors v WHERE v.id = ANY($${params.length + 1}::int[])) AS vendor_names,`
+    ? `(SELECT STRING_AGG(DISTINCT v.name, ', ') FROM vendors v WHERE v.id = ANY($${vendorIdParam}::int[])) AS vendor_names,`
     : `NULL::text AS vendor_names,`;
-  if (vendorIds.length) params.push(vendorIds);
 
   const res = await query(
     `SELECT
@@ -80,7 +107,7 @@ async function fetchCatalogProducts({ search, pageSize, vendorIds = [], brandId 
      LEFT JOIN taxes t ON t.id = p.tax_id
      WHERE ${filters.join(' AND ')}
      ORDER BY p.name ASC
-     LIMIT $${params.length}`,
+     LIMIT $${limitParam}`,
     params
   );
 
@@ -141,7 +168,7 @@ export async function GET(request) {
         COALESCE(p.name, '') ILIKE $${params.length}
         OR COALESCE(p.sku, '') ILIKE $${params.length}
         OR COALESCE(p.barcode, '') ILIKE $${params.length}
-        OR COALESCE(p.product_id, '') ILIKE $${params.length}
+        OR COALESCE(p.product_id::text, '') ILIKE $${params.length}
       )`);
     }
     addBrandFilter(filters, params, { brandId, brandName });

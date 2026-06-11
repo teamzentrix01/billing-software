@@ -176,6 +176,7 @@ export async function POST(request, { params }) {
       auth.user,
       "MANAGE_INVENTORY",
       "MANAGE_PURCHASE_ORDERS",
+      "APPROVE_REMOTE_GRN",
     );
     if (permissionCheck.error) return permissionCheck.error;
     const body = await request.json();
@@ -255,6 +256,14 @@ export async function POST(request, { params }) {
       stockInMeta.source === "remote_grn" ||
       form.source === "remote_grn" ||
       items.some((item) => item.remoteGrn || item.source === "remote_grn");
+    if (isRemoteGrn) {
+      const remoteGrnPermission = requirePermission(
+        auth.user,
+        "APPROVE_REMOTE_GRN",
+        "MANAGE_PURCHASE_ORDERS",
+      );
+      if (remoteGrnPermission.error) return remoteGrnPermission.error;
+    }
     const isWarehouseSource = sourceType === "warehouse";
     const isDirectVendorReceipt =
       isRemoteGrn ||

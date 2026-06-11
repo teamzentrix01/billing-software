@@ -130,9 +130,8 @@ export async function PUT(request, { params }) {
       : toString(body.warehouse);
     const assignedStores = Array.from(new Set([
       ...normalizeStoreIds(
-      body.assigned_stores || body.assignedStores || body.store_ids || body.storeIds || body.store_id || body.storeId || regionStore
+        body.assigned_stores || body.assignedStores || body.store_ids || body.storeIds || body.store_id || body.storeId || regionStore
       ),
-      ...normalizeStoreIds(warehouse),
     ]));
     const permissions = normalizePermissions(body.permissions);
     const departmentId = body.department_id ?? body.departmentId ?? null;

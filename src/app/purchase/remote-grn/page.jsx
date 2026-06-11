@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import MainLayout from '@/components/MainLayout';
 import { fetchLookup, normalizeStores } from '@/lib/purchaseLookups';
+import { useUser } from '@/hooks/useUser';
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -32,7 +33,7 @@ function money(value) {
 }
 
 function lineCost(item) {
-  return toQty(item.qty) * toNumber(item.cost_price);
+  return toQty(item.qty) * toNumber(item.mrp);
 }
 
 function lineTax(item) {
@@ -46,6 +47,16 @@ function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function dateInputValue(value) {
+  if (!value) return '';
+  const raw = String(value).trim();
+  const match = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (match) return `${match[1]}-${String(match[2]).padStart(2, '0')}-${String(match[3]).padStart(2, '0')}`;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
 }
 
 async function loadStores() {
@@ -76,8 +87,8 @@ function makeRow(product, scanCode) {
     scanCode,
     qty: '1',
     mrp: product.mrp || '',
-    cost_price: product.costPrice || '',
-    selling_price: product.sellingPrice || '',
+    cost_price: product.mrp || '',
+    selling_price: product.mrp || '',
     tax_rate: product.taxRate ?? product.taxValue ?? 0,
     tax_value: 0,
     batchNo: '',
@@ -87,6 +98,7 @@ function makeRow(product, scanCode) {
 }
 
 export default function RemoteGrnPage() {
+  const { user } = useUser();
   const scanInputRef = useRef(null);
   const [stores, setStores] = useState([]);
   const [records, setRecords] = useState([]);
@@ -100,6 +112,16 @@ export default function RemoteGrnPage() {
   const [activeDraftId, setActiveDraftId] = useState(null);
   const [recordActionId, setRecordActionId] = useState(null);
   const [toast, setToast] = useState(null);
+  const userPermissions = Array.isArray(user?.permissions) ? user.permissions : [];
+  const canApproveRemoteGrn =
+    user?.role === 'super_admin' ||
+    user?.system_role === 'super_admin' ||
+    userPermissions.includes('*') ||
+    userPermissions.includes('APPROVE_REMOTE_GRN') ||
+    userPermissions.includes('MANAGE_PURCHASE_ORDERS');
+  const canViewCosting =
+    canApproveRemoteGrn ||
+    userPermissions.includes('VIEW_REMOTE_GRN_COSTING');
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
@@ -137,7 +159,6 @@ export default function RemoteGrnPage() {
       itemQty,
       itemCost,
       tax,
-      grandTotal: itemCost + tax + other,
     };
   }, [form.otherCharges, items]);
 
@@ -202,10 +223,9 @@ export default function RemoteGrnPage() {
       !item.product_id ||
       toQty(item.qty) <= 0 ||
       toNumber(item.mrp) < 0 ||
-      toNumber(item.cost_price) < 0 ||
-      toNumber(item.selling_price) < 0
+      toNumber(item.mrp) < 0
     );
-    if (invalid) return `Check qty, MRP, CP and SP for ${invalid.productName}`;
+    if (invalid) return `Check qty and MRP for ${invalid.productName}`;
     return '';
   };
 
@@ -215,8 +235,8 @@ export default function RemoteGrnPage() {
       productName: item.productName,
       qty: toQty(item.qty),
       mrp: toNumber(item.mrp),
-      cost_price: toNumber(item.cost_price),
-      selling_price: toNumber(item.selling_price),
+      cost_price: canViewCosting ? toNumber(item.cost_price) : toNumber(item.mrp),
+      selling_price: canViewCosting ? toNumber(item.selling_price) : toNumber(item.mrp),
       tax_value: lineTax(item),
       tax_rate: toNumber(item.tax_rate ?? item.taxRate),
       batchNo: item.batchNo,
@@ -269,8 +289,16 @@ export default function RemoteGrnPage() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to save Remote GRN');
-      if (!activeDraftId && json.id) setActiveDraftId(json.id);
-      showToast(`Draft saved${json.transactionId ? `: ${json.transactionId}` : ''}`);
+      if (canApproveRemoteGrn) {
+        if (!activeDraftId && json.id) setActiveDraftId(json.id);
+        showToast(`Draft saved${json.transactionId ? `: ${json.transactionId}` : ''}`);
+      } else {
+        setForm(emptyForm());
+        setItems([]);
+        setScanCode('');
+        setActiveDraftId(null);
+        showToast(`Remote GRN submitted for approval${json.transactionId ? `: ${json.transactionId}` : ''}`);
+      }
       await refreshRecords();
       return json;
     } catch (err) {
@@ -282,6 +310,10 @@ export default function RemoteGrnPage() {
   };
 
   const confirmGrn = async () => {
+    if (!canApproveRemoteGrn) {
+      showToast('Only Remote GRN approvers can confirm stock', 'error');
+      return;
+    }
     const draft = await saveDraft();
     const draftId = draft?.id || activeDraftId;
     if (!draftId) return;
@@ -338,12 +370,12 @@ export default function RemoteGrnPage() {
         scanCode: item.scanCode || item.barcode || item.sku || '',
         qty: formatQty(item.qty),
         mrp: item.mrp || '',
-        cost_price: item.costPrice || '',
-        selling_price: item.sellingPrice || '',
+        cost_price: item.costPrice ?? item.cost_price ?? item.mrp ?? '',
+        selling_price: item.sellingPrice ?? item.selling_price ?? item.mrp ?? '',
         tax_value: item.taxValue || 0,
         tax_rate: item.meta?.taxRate ?? item.taxRate ?? 0,
-        batchNo: item.batchNo || '',
-        expiryDate: item.expiryDate || '',
+        batchNo: item.batchNo || item.batch_no || item.meta?.batchNo || '',
+        expiryDate: dateInputValue(item.expiryDate || item.expiry_date || item.meta?.expiryDate),
         serialNumber: item.serialNumber || '',
       })));
       showToast(`${json.transactionId || 'Draft'} opened`);
@@ -375,12 +407,12 @@ export default function RemoteGrnPage() {
         productName: item.productName,
         qty: toQty(item.qty),
         mrp: item.mrp,
-        cost_price: item.costPrice,
-        selling_price: item.sellingPrice,
+        cost_price: item.costPrice ?? item.cost_price ?? item.mrp,
+        selling_price: item.sellingPrice ?? item.selling_price ?? item.mrp,
         tax_value: item.taxValue,
         tax_rate: item.meta?.taxRate ?? item.taxRate ?? 0,
-        batchNo: item.batchNo,
-        expiryDate: item.expiryDate,
+        batchNo: item.batchNo || item.batch_no || item.meta?.batchNo || '',
+        expiryDate: dateInputValue(item.expiryDate || item.expiry_date || item.meta?.expiryDate),
         serialNumber: item.serialNumber,
         scanCode: item.scanCode,
       }));
@@ -434,7 +466,7 @@ export default function RemoteGrnPage() {
               <p className="mt-1 text-sm font-medium text-slate-500">
                 {activeDraftId
                   ? `Editing draft RGRN-${String(activeDraftId).padStart(4, '0')}`
-                  : 'Scan barcode or S.No, fetch product master data, enter received qty and prices store-wise.'}
+                  : 'Scan barcode or S.No, fetch product master data, then enter received qty and MRP store-wise.'}
               </p>
             </div>
             <div className="grid grid-cols-2 gap-2 sm:flex">
@@ -444,16 +476,18 @@ export default function RemoteGrnPage() {
                 disabled={saving || confirming}
                 className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
               >
-                {saving ? 'Saving...' : 'Save Draft'}
+                {saving ? 'Saving...' : canApproveRemoteGrn ? 'Save Draft' : 'Submit for Approval'}
               </button>
-              <button
-                type="button"
-                onClick={confirmGrn}
-                disabled={saving || confirming}
-                className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-800 disabled:opacity-50"
-              >
-                {confirming ? 'Posting...' : 'Confirm GRN'}
-              </button>
+              {canApproveRemoteGrn && (
+                <button
+                  type="button"
+                  onClick={confirmGrn}
+                  disabled={saving || confirming}
+                  className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-800 disabled:opacity-50"
+                >
+                  {confirming ? 'Posting...' : 'Confirm GRN'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -531,20 +565,15 @@ export default function RemoteGrnPage() {
                     <h2 className="text-base font-black text-slate-950">Summary</h2>
                     <p className="text-xs font-medium text-slate-500">Review totals before saving or confirming GRN.</p>
                   </div>
-                  <div className="text-lg font-black text-slate-950">{money(totals.grandTotal)}</div>
                 </div>
-                <div className="grid gap-3 md:grid-cols-4">
+                <div className="grid gap-3 md:grid-cols-3">
                   <div className="rounded-lg bg-slate-50 p-3">
                     <p className="text-xs font-black uppercase tracking-widest text-slate-400">Total Qty</p>
                     <p className="mt-1 text-lg font-black text-slate-900">{formatQty(totals.itemQty)}</p>
                   </div>
                   <div className="rounded-lg bg-slate-50 p-3">
-                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Item Cost</p>
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Item MRP</p>
                     <p className="mt-1 text-lg font-black text-slate-900">{money(totals.itemCost)}</p>
-                  </div>
-                  <div className="rounded-lg bg-slate-50 p-3">
-                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Tax</p>
-                    <p className="mt-1 text-lg font-black text-slate-900">{money(totals.tax)}</p>
                   </div>
                   <label className="block rounded-lg bg-slate-50 p-3">
                     <span className="mb-1 block text-xs font-black uppercase tracking-widest text-slate-400">Other Charges</span>
@@ -573,7 +602,7 @@ export default function RemoteGrnPage() {
                 <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-base font-black text-slate-950">Received Items</h2>
-                    <p className="text-xs font-medium text-slate-500">Qty, MRP, CP and SP are manual for every scanned product.</p>
+                    <p className="text-xs font-medium text-slate-500">Qty and MRP are manual for every scanned product.</p>
                   </div>
                   <span className="text-xs font-bold text-slate-500">{items.length} products</span>
                 </div>
@@ -586,8 +615,8 @@ export default function RemoteGrnPage() {
                         <th className="px-3 py-3">Scan</th>
                         <th className="px-3 py-3">Qty</th>
                         <th className="px-3 py-3">MRP</th>
-                        <th className="px-3 py-3">CP</th>
-                        <th className="px-3 py-3">SP</th>
+                        {canViewCosting && <th className="px-3 py-3">CP</th>}
+                        {canViewCosting && <th className="px-3 py-3">SP</th>}
                         <th className="px-3 py-3">Batch</th>
                         <th className="px-3 py-3">Expiry</th>
                         <th className="px-3 py-3">Total</th>
@@ -602,7 +631,12 @@ export default function RemoteGrnPage() {
                             <p className="text-xs text-slate-500">{item.sku || item.barcode || '-'}</p>
                           </td>
                           <td className="px-3 py-3 text-xs">{item.scanCode || '-'}</td>
-                          {['qty', 'mrp', 'cost_price', 'selling_price'].map((key) => (
+                          {[
+                            ['qty', true],
+                            ['mrp', true],
+                            ['cost_price', canViewCosting],
+                            ['selling_price', canViewCosting],
+                          ].filter(([, visible]) => visible).map(([key]) => (
                             <td key={key} className="px-3 py-3">
                               <input
                                 type="number"
@@ -640,7 +674,7 @@ export default function RemoteGrnPage() {
                       ))}
                       {!items.length && (
                         <tr>
-                          <td colSpan="10" className="px-4 py-10 text-center text-sm font-semibold text-slate-400">
+                          <td colSpan={canViewCosting ? 10 : 8} className="px-4 py-10 text-center text-sm font-semibold text-slate-400">
                             Scan a product to start Remote GRN.
                           </td>
                         </tr>
@@ -665,8 +699,7 @@ export default function RemoteGrnPage() {
                         {[
                           ['qty', 'Qty'],
                           ['mrp', 'MRP'],
-                          ['cost_price', 'CP'],
-                          ['selling_price', 'SP'],
+                          ...(canViewCosting ? [['cost_price', 'CP'], ['selling_price', 'SP']] : []),
                         ].map(([key, label]) => (
                           <label key={key} className="block">
                             <span className="mb-1 block text-xs font-bold text-slate-600">{label}</span>
@@ -708,6 +741,7 @@ export default function RemoteGrnPage() {
                   )}
                 </div>
               </div>
+              {canApproveRemoteGrn && (
               <div className="rounded-lg border border-slate-200 bg-white">
                 <div className="border-b border-slate-200 px-4 py-3">
                   <h2 className="text-base font-black text-slate-950">Recent Remote GRNs</h2>
@@ -754,6 +788,7 @@ export default function RemoteGrnPage() {
                   )}
                 </div>
               </div>
+              )}
           </div>
         </div>
       </div>
