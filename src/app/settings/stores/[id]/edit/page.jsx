@@ -140,6 +140,19 @@ async function fileToDocument(file) {
   });
 }
 
+async function uploadStoreDocument(storeId, key, document) {
+  if (!document) return;
+  const res = await fetch(`/api/stores/${storeId}/documents/${key}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) {
+    throw new Error(json.message || `Failed to upload ${document.name || key}`);
+  }
+}
+
 export default function EditStorePage() {
   const params = useParams();
   const router = useRouter();
@@ -373,13 +386,7 @@ export default function EditStorePage() {
 
     try {
       const payload = { ...form };
-      if (dirtyDocumentKeys.length) {
-        payload.documents = Object.fromEntries(
-          dirtyDocumentKeys.map((key) => [key, form.documents[key] || null]),
-        );
-      } else {
-        delete payload.documents;
-      }
+      delete payload.documents;
 
       const res = await fetch(`/api/stores/${params.id}`, {
         method: "PUT",
@@ -393,10 +400,17 @@ export default function EditStorePage() {
         return;
       }
 
+      for (const key of dirtyDocumentKeys) {
+        const document = form.documents[key];
+        if (document?.dataUrl) {
+          await uploadStoreDocument(params.id, key, document);
+        }
+      }
+
       setDirtyDocumentKeys([]);
       setSuccess("Store updated successfully");
-    } catch {
-      setError("Failed to update store");
+    } catch (err) {
+      setError(err.message || "Failed to update store");
     } finally {
       setSaving(false);
     }

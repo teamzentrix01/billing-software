@@ -188,6 +188,19 @@ function getApiErrorMessage(json, fallback = "Failed to create store") {
   return json?.message || fallback;
 }
 
+async function uploadStoreDocument(storeId, key, document) {
+  if (!document) return;
+  const res = await fetch(`/api/stores/${storeId}/documents/${key}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.success) {
+    throw new Error(json.message || `Failed to upload ${document.name || key}`);
+  }
+}
+
 function locationFromPincodeOffice(office) {
   if (!office) return null;
   const city = String(
@@ -499,7 +512,6 @@ export default function CreateStorePage() {
                   name: document.name,
                   type: document.type,
                   size: document.size,
-                  dataUrl: document.dataUrl,
                 }
               : null,
           ]),
@@ -524,6 +536,16 @@ export default function CreateStorePage() {
             : getApiErrorMessage(json),
         );
         return;
+      }
+      const storeId = json.data?.store?.id;
+      if (!storeId) {
+        setError("Store created but document upload could not start. Please edit the store and re-upload documents.");
+        return;
+      }
+      for (const [key, document] of Object.entries(form.documents || {})) {
+        if (document?.dataUrl) {
+          await uploadStoreDocument(storeId, key, document);
+        }
       }
       router.push("/settings/stores");
     } catch (err) {
