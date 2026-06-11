@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactCompiler: true,
+  experimental: {
+    proxyClientMaxBodySize: 35 * 1024 * 1024,
+  },
   turbopack: {
     root: process.cwd(),
   },

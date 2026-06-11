@@ -149,6 +149,7 @@ export default function EditStorePage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
+  const [dirtyDocumentKeys, setDirtyDocumentKeys] = useState([]);
 
   useEffect(() => {
     let mounted = true;
@@ -167,6 +168,7 @@ export default function EditStorePage() {
 
         const store = json.data.store;
         const meta = store.meta || {};
+        setDirtyDocumentKeys([]);
         setForm({
           ...initialForm,
           name: store.name || "",
@@ -248,6 +250,7 @@ export default function EditStorePage() {
   const onDocumentChange = async (key, file) => {
     if (!file) {
       setForm((p) => ({ ...p, documents: { ...p.documents, [key]: null } }));
+      setDirtyDocumentKeys((keys) => [...new Set([...keys, key])]);
       setFieldErrors((p) => ({ ...p, [`documents.${key}`]: "" }));
       return;
     }
@@ -273,6 +276,7 @@ export default function EditStorePage() {
     try {
       const doc = await fileToDocument(file);
       setForm((p) => ({ ...p, documents: { ...p.documents, [key]: doc } }));
+      setDirtyDocumentKeys((keys) => [...new Set([...keys, key])]);
       setFieldErrors((p) => ({ ...p, [`documents.${key}`]: "" }));
     } catch {
       setFieldErrors((p) => ({
@@ -368,10 +372,19 @@ export default function EditStorePage() {
     setSaving(true);
 
     try {
+      const payload = { ...form };
+      if (dirtyDocumentKeys.length) {
+        payload.documents = Object.fromEntries(
+          dirtyDocumentKeys.map((key) => [key, form.documents[key] || null]),
+        );
+      } else {
+        delete payload.documents;
+      }
+
       const res = await fetch(`/api/stores/${params.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
 
       const json = await res.json();
@@ -380,6 +393,7 @@ export default function EditStorePage() {
         return;
       }
 
+      setDirtyDocumentKeys([]);
       setSuccess("Store updated successfully");
     } catch {
       setError("Failed to update store");
