@@ -8,8 +8,8 @@ const PINNED = [
   {
     label: 'Orders list',
     subtitle: 'Today',
-    value: '0 orders',
-    change: '+12%',
+    value: 'Loading...',
+    change: null,
     barColor: 'bg-blue-400',
     href: '/reports/orders/list-of-orders',
   },
@@ -17,7 +17,7 @@ const PINNED = [
     label: 'Daily Sales (DSR)',
     subtitle: 'Today',
     value: '₹0',
-    change: '+8.4%',
+    change: null,
     barColor: 'bg-green-400',
     href: '/reports/sales/daily-sales',
   },
@@ -25,16 +25,16 @@ const PINNED = [
     label: 'Net sales',
     subtitle: 'Today, after tax & discount',
     value: '₹0',
-    change: '+8.4%',
+    change: null,
     barColor: 'bg-blue-300',
     href: '/reports/net-sales',
   },
   {
     label: 'Stock level',
     subtitle: 'Now',
-    value: '4 SKUs',
-    badge: 'low',
-    extra: 'watch',
+    value: 'Loading...',
+    badge: '',
+    extra: '',
     barColor: 'bg-blue-200',
     href: '/reports/inventory/stock-level',
   },
@@ -282,19 +282,33 @@ export default function ReportsHomePage() {
     : null;
   const livePinned = PINNED.map((card) => {
     if (card.href === '/reports/orders/list-of-orders') {
-      return { ...card, value: dashboard?.pinned?.orders?.label || card.value };
-    }
-    if (card.href === '/reports/sales/daily-sales') {
-      return { ...card, value: dashboard?.pinned?.dailySales?.label || card.value };
-    }
-    if (card.href === '/reports/net-sales') {
-      return { ...card, value: dashboard?.pinned?.netSales?.label || card.value };
-    }
-    if (card.href === '/reports/inventory/stock-level') {
       return {
         ...card,
-        value: dashboard?.pinned?.stockLevel?.label || card.value,
-        badge: dashboard?.pinned?.stockLevel ? `${dashboard.pinned.stockLevel.low} low` : card.badge,
+        value: dashboard?.pinned?.orders?.label || 'Loading...',
+        change: dashboard?.pinned?.orders?.change || null,
+      };
+    }
+    if (card.href === '/reports/sales/daily-sales') {
+      return {
+        ...card,
+        value: dashboard?.pinned?.dailySales?.label || 'Loading...',
+        change: dashboard?.pinned?.dailySales?.change || null,
+      };
+    }
+    if (card.href === '/reports/net-sales') {
+      return {
+        ...card,
+        value: dashboard?.pinned?.netSales?.label || 'Loading...',
+        change: dashboard?.pinned?.netSales?.change || null,
+      };
+    }
+    if (card.href === '/reports/inventory/stock-level') {
+      const low = Number(dashboard?.pinned?.stockLevel?.low || 0);
+      return {
+        ...card,
+        value: dashboard?.pinned?.stockLevel?.label || 'Loading...',
+        badge: dashboard?.pinned?.stockLevel ? `${low} low` : '',
+        extra: dashboard?.pinned?.stockLevel ? (low > 0 ? 'Needs attention' : 'Healthy') : '',
       };
     }
     return card;

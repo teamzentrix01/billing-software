@@ -806,6 +806,7 @@ function DocumentUpload({ field, document, error, onChange }) {
   const documentType = String(document?.type || "").toLowerCase();
   const isPdf = documentType.includes("pdf");
   const isImage = documentType.startsWith("image/");
+  const hasPreview = Boolean(document?.dataUrl);
 
   return (
     <>
@@ -840,11 +841,16 @@ function DocumentUpload({ field, document, error, onChange }) {
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              setShowPreview((current) => !current);
+              if (hasPreview) setShowPreview((current) => !current);
             }}
-            className="text-xs font-semibold text-blue-700 hover:underline"
+            disabled={!hasPreview}
+            className={`text-xs font-semibold ${
+              hasPreview
+                ? "text-blue-700 hover:underline"
+                : "cursor-not-allowed text-gray-400"
+            }`}
           >
-            {showPreview ? "Hide Preview" : "Show Preview"}
+            {hasPreview ? (showPreview ? "Hide Preview" : "Show Preview") : "Re-upload to preview"}
           </button>
           <button
             type="button"

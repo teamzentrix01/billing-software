@@ -1,6 +1,6 @@
 import { requireAuth, requireRole } from '@/lib/api-protection';
 import { successResponse, errorResponse } from '@/lib/api-response';
-import { getReportsDashboard } from '@/lib/reportsService';
+import { getLiveReportsDashboard } from '@/lib/reportsService';
 
 export async function GET(request) {
   try {
@@ -10,7 +10,7 @@ export async function GET(request) {
     const roleCheck = requireRole(auth.user, 'super_admin', 'admin', 'manager');
     if (roleCheck.error) return roleCheck.error;
 
-    const dashboard = await getReportsDashboard(auth.user);
+    const dashboard = await getLiveReportsDashboard(auth.user);
     return successResponse(dashboard);
   } catch (err) {
     console.error('[reports dashboard]', err);

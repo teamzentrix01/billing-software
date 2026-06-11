@@ -229,6 +229,24 @@ function number(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function canAccessAllStoresForReports(user) {
+  const assignedStores = (user?.assigned_stores || []).map(Number).filter(Number.isFinite);
+  return user?.role === 'super_admin' && assignedStores.length === 0 && !user?.is_employee;
+}
+
+function addDashboardStoreScope({ conditions, params, user, alias = 'sb', column = 'store_id' }) {
+  if (canAccessAllStoresForReports(user)) return;
+
+  const assignedStores = (user?.assigned_stores || []).map(Number).filter(Number.isFinite);
+  if (!assignedStores.length) {
+    conditions.push('1 = 0');
+    return;
+  }
+
+  params.push(assignedStores);
+  conditions.push(`${alias}.${column} = ANY($${params.length}::int[])`);
+}
+
 function getStockDisplayUnit(unit) {
   const normalized = String(unit || 'PCS').trim().toUpperCase();
   if (['KG', 'KGS', 'KILOGRAM', 'KILOGRAMS', 'GRAM', 'GRAMS', 'GM', 'G'].includes(normalized)) {
@@ -2022,6 +2040,119 @@ async function getAuditLogReport(filters, user, type = '') {
     product: row.resource_type === 'product' ? row.resource_id : '',
     order_id: row.resource_type === 'order' ? row.resource_id : '',
   }));
+}
+
+export async function getLiveReportsDashboard(user) {
+  await ensureReportSchemas();
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const todayParams = [today];
+  const todayConditions = [
+    `DATE(sb.created_at AT TIME ZONE 'Asia/Kolkata') = $1::date`,
+    `sb.status IN ('paid', 'completed', 'partial', 'pending')`,
+  ];
+  addDashboardStoreScope({ conditions: todayConditions, params: todayParams, user, alias: 'sb' });
+
+  const yesterdayParams = [yesterday];
+  const yesterdayConditions = [
+    `DATE(sb.created_at AT TIME ZONE 'Asia/Kolkata') = $1::date`,
+    `sb.status IN ('paid', 'completed', 'partial', 'pending')`,
+  ];
+  addDashboardStoreScope({ conditions: yesterdayConditions, params: yesterdayParams, user, alias: 'sb' });
+
+  const stockParams = [];
+  const stockConditions = ['ps.is_active = TRUE'];
+  addDashboardStoreScope({ conditions: stockConditions, params: stockParams, user, alias: 'ps' });
+
+  const [todaySalesResult, yesterdaySalesResult, stockResult, stores] = await Promise.all([
+    query(
+      `SELECT
+         COUNT(*)::int AS orders,
+         COALESCE(SUM(sb.grand_total), 0)::numeric AS gross_sales,
+         COALESCE(SUM(sb.tax_total), 0)::numeric AS tax_total,
+         COALESCE(SUM(sb.discount_total), 0)::numeric AS discount_total
+       FROM sales_bills sb
+       WHERE ${todayConditions.join(' AND ')}`,
+      todayParams
+    ),
+    query(
+      `SELECT
+         COUNT(*)::int AS orders,
+         COALESCE(SUM(sb.grand_total), 0)::numeric AS gross_sales,
+         COALESCE(SUM(sb.tax_total), 0)::numeric AS tax_total,
+         COALESCE(SUM(sb.discount_total), 0)::numeric AS discount_total
+       FROM sales_bills sb
+       WHERE ${yesterdayConditions.join(' AND ')}`,
+      yesterdayParams
+    ),
+    query(
+      `WITH stock AS (
+         SELECT product_id, store_id, COALESCE(SUM(available_qty), 0) AS available_qty
+         FROM inventory_batches
+         WHERE status = 'active'
+         GROUP BY product_id, store_id
+       )
+       SELECT
+         COUNT(DISTINCT ps.product_id)::int AS skus,
+         COUNT(DISTINCT CASE
+           WHEN COALESCE(stock.available_qty, 0) <= COALESCE(NULLIF(ps.low_stock_value, 0), 10)
+           THEN ps.product_id
+         END)::int AS low_skus
+       FROM product_saleability ps
+       LEFT JOIN stock ON stock.product_id = ps.product_id AND stock.store_id = ps.store_id
+       WHERE ${stockConditions.join(' AND ')}`,
+      stockParams
+    ),
+    getStoresForUser(user),
+  ]);
+
+  const todaySales = todaySalesResult.rows[0] || {};
+  const yesterdaySales = yesterdaySalesResult.rows[0] || {};
+  const stock = stockResult.rows[0] || {};
+  const todayGross = number(todaySales.gross_sales);
+  const yesterdayGross = number(yesterdaySales.gross_sales);
+  const todayNet = Math.max(0, todayGross - number(todaySales.tax_total) - number(todaySales.discount_total));
+  const yesterdayNet = Math.max(
+    0,
+    number(yesterdaySales.gross_sales) -
+      number(yesterdaySales.tax_total) -
+      number(yesterdaySales.discount_total)
+  );
+  const changeLabel = (current, previous) => {
+    if (!previous && !current) return '0%';
+    if (!previous) return '+100%';
+    const change = ((current - previous) / previous) * 100;
+    const rounded = Math.abs(change) >= 10 ? change.toFixed(0) : change.toFixed(1);
+    return `${change >= 0 ? '+' : ''}${rounded}%`;
+  };
+
+  return {
+    stores,
+    pinned: {
+      orders: {
+        value: number(todaySales.orders),
+        label: `${number(todaySales.orders)} orders`,
+        change: changeLabel(number(todaySales.orders), number(yesterdaySales.orders)),
+      },
+      dailySales: {
+        value: todayGross,
+        label: `₹${money(todayGross)}`,
+        change: changeLabel(todayGross, yesterdayGross),
+      },
+      netSales: {
+        value: todayNet,
+        label: `₹${money(todayNet)}`,
+        change: changeLabel(todayNet, yesterdayNet),
+      },
+      stockLevel: {
+        value: number(stock.skus),
+        low: number(stock.low_skus),
+        label: `${number(stock.skus)} SKUs`,
+      },
+    },
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 export async function getReportsDashboard(user) {

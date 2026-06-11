@@ -7,12 +7,69 @@ import { menuItems } from './sidebarConfig';
 import { useUser } from '@/hooks/useUser';
 import { filterMenuItemsForUser, getPageTitleForMenu } from '@/lib/accessControl';
 
+function buildSearchItems(items = []) {
+  const seen = new Set();
+  const results = [];
+
+  const addItem = ({ label, href, section, group, icon }) => {
+    if (!label || !href || seen.has(href)) return;
+    seen.add(href);
+    results.push({
+      label,
+      href,
+      section: section || 'Workspace',
+      group: group || '',
+      icon: icon || 'ti-arrow-up-right',
+      haystack: [label, href, section, group].filter(Boolean).join(' ').toLowerCase(),
+    });
+  };
+
+  items.forEach((item) => {
+    addItem({
+      label: item.label,
+      href: item.href,
+      section: item.label,
+      group: 'Main',
+      icon: item.icon,
+    });
+
+    if (Array.isArray(item.subSidebar?.flatItems)) {
+      item.subSidebar.flatItems.forEach((subItem) => {
+        addItem({
+          label: subItem.label,
+          href: subItem.href,
+          section: item.label,
+          group: item.subSidebar.title,
+          icon: subItem.icon || item.subSidebar.titleIcon || item.icon,
+        });
+      });
+    }
+
+    (item.subSidebar?.groups || []).forEach((group) => {
+      (group.items || []).forEach((subItem) => {
+        addItem({
+          label: subItem.label,
+          href: subItem.href,
+          section: item.label,
+          group: group.label,
+          icon: subItem.icon || group.icon || item.subSidebar.titleIcon || item.icon,
+        });
+      });
+    });
+  });
+
+  return results;
+}
+
 export default function Topbar({ onMenuOpen, sidebarExpanded = false }) {
   const router = useRouter();
   const pathname = usePathname();
   const { user, loading: loadingUser } = useUser();
   const accessibleMenuItems = useMemo(() => filterMenuItemsForUser(menuItems, user), [user]);
   const title = getPageTitleForMenu(accessibleMenuItems, pathname);
+  const searchItems = useMemo(() => buildSearchItems(accessibleMenuItems), [accessibleMenuItems]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [openSearch, setOpenSearch] = useState(false);
   const [openProfile, setOpenProfile] = useState(false);
   const [openChangePassword, setOpenChangePassword] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
@@ -32,6 +89,7 @@ export default function Topbar({ onMenuOpen, sidebarExpanded = false }) {
   const [passwordRequests, setPasswordRequests] = useState([]);
   const profileRef = useRef(null);
   const notificationRef = useRef(null);
+  const searchRef = useRef(null);
 
   const initials = useMemo(() => {
     const name = user?.name?.trim();
@@ -85,6 +143,31 @@ export default function Topbar({ onMenuOpen, sidebarExpanded = false }) {
     requisitionRequests.length +
     procurementAlerts.length +
     passwordRequests.length;
+
+  const filteredSearchItems = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return searchItems.slice(0, 8);
+
+    return searchItems
+      .map((item) => {
+        const label = item.label.toLowerCase();
+        const section = item.section.toLowerCase();
+        const exactBoost = label === query ? 0 : label.startsWith(query) ? 1 : section.startsWith(query) ? 2 : 3;
+        return { item, exactBoost };
+      })
+      .filter(({ item }) => item.haystack.includes(query))
+      .sort((a, b) => a.exactBoost - b.exactBoost || a.item.label.localeCompare(b.item.label))
+      .slice(0, 10)
+      .map(({ item }) => item);
+  }, [searchItems, searchQuery]);
+
+  const goToSearchItem = (href) => {
+    setOpenSearch(false);
+    setSearchQuery('');
+    setOpenProfile(false);
+    setOpenNotifications(false);
+    router.push(href);
+  };
 
   const loadReturnNotifications = useCallback(async () => {
     if (!user) {
@@ -202,10 +285,38 @@ export default function Topbar({ onMenuOpen, sidebarExpanded = false }) {
       if (notificationRef.current && !notificationRef.current.contains(event.target)) {
         setOpenNotifications(false);
       }
+      if (searchRef.current && !searchRef.current.contains(event.target)) {
+        setOpenSearch(false);
+      }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      const target = event.target;
+      const isTyping =
+        target instanceof HTMLElement &&
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setOpenSearch(true);
+        setTimeout(() => searchRef.current?.querySelector('input')?.focus(), 0);
+        return;
+      }
+
+      if (!isTyping && event.key === '/') {
+        event.preventDefault();
+        setOpenSearch(true);
+        setTimeout(() => searchRef.current?.querySelector('input')?.focus(), 0);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   const handleLogout = async () => {
@@ -332,6 +443,79 @@ export default function Topbar({ onMenuOpen, sidebarExpanded = false }) {
 
       {/* Right Actions */}
       <div className="flex items-center gap-2 md:gap-3 flex-shrink-0">
+        <div ref={searchRef} className="relative">
+          <button
+            type="button"
+            onClick={() => {
+              setOpenSearch(true);
+              setTimeout(() => searchRef.current?.querySelector('input')?.focus(), 0);
+            }}
+            className="md:hidden rounded-xl p-2 text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-700"
+            aria-label="Search pages"
+          >
+            <i className="ti ti-search text-[20px]" />
+          </button>
+
+          <div
+            className={`${
+              openSearch ? 'fixed left-3 right-3 top-[58px] z-50 md:static md:z-auto' : 'hidden md:block'
+            }`}
+          >
+            <div className="relative w-full md:w-[360px]">
+              <i className="ti ti-search pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[17px] text-slate-400" />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  setOpenSearch(true);
+                }}
+                onFocus={() => setOpenSearch(true)}
+                placeholder="Search pages, reports, settings..."
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-9 pr-16 text-[13px] font-medium text-slate-800 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              />
+              <span className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-bold text-slate-400 md:block">
+                Ctrl K
+              </span>
+            </div>
+          </div>
+
+          {openSearch && (
+            <div className="fixed left-3 right-3 top-[104px] z-50 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_50px_rgba(15,23,42,0.16)] md:absolute md:left-auto md:right-0 md:top-[44px] md:w-[420px]">
+              <div className="max-h-[420px] overflow-auto py-2">
+                {filteredSearchItems.length > 0 ? (
+                  filteredSearchItems.map((item) => (
+                    <button
+                      key={item.href}
+                      type="button"
+                      onClick={() => goToSearchItem(item.href)}
+                      className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-blue-50 ${
+                        pathname === item.href ? 'bg-blue-50' : ''
+                      }`}
+                    >
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                        <i className={`ti ${item.icon} text-[17px]`} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-bold text-slate-900">{item.label}</span>
+                        <span className="block truncate text-[11px] font-semibold text-slate-400">
+                          {item.section}{item.group ? ` / ${item.group}` : ''}
+                        </span>
+                      </span>
+                      <i className="ti ti-arrow-up-right text-[15px] text-slate-300" />
+                    </button>
+                  ))
+                ) : (
+                  <div className="px-4 py-8 text-center">
+                    <p className="text-[13px] font-semibold text-slate-700">No matching page found</p>
+                    <p className="mt-1 text-[12px] text-slate-400">Try report, stock, customer, settings, or billing.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         <div ref={notificationRef} className="relative">
           <button
             type="button"
