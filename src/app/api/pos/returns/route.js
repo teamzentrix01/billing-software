@@ -14,6 +14,15 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function roundQty(value) {
+  return Math.round(toNumber(value) * 1000) / 1000;
+}
+
+function isWholeQty(value) {
+  const qty = Number(value);
+  return Number.isInteger(qty) && qty > 0;
+}
+
 function isSuperAdmin(user) {
   return user?.role === "super_admin";
 }
@@ -140,6 +149,55 @@ export async function POST(req) {
         `${duplicate.product_name} return is ${label} on this invoice (request #${duplicate.return_id})`,
         409,
       );
+    }
+
+    const requestedByProduct = new Map();
+    for (const item of items) {
+      const productId = Number(item.product_id);
+      const qty = roundQty(item.qty);
+      if (!Number.isFinite(productId) || productId <= 0 || qty <= 0) {
+        return errorResponse("Return quantity must be greater than 0", 400);
+      }
+      if (!isWholeQty(item.qty)) {
+        return errorResponse("Return quantity must be a whole number", 400);
+      }
+      requestedByProduct.set(productId, roundQty((requestedByProduct.get(productId) || 0) + qty));
+    }
+
+    const soldQtyRes = await query(
+      `SELECT
+         sbi.product_id,
+         COALESCE(p.name, MAX(sbi.product_name), 'Product') AS product_name,
+         SUM(COALESCE(sbi.qty, 0))::numeric AS sold_qty,
+         COALESCE(returned.returned_qty, 0)::numeric AS returned_qty
+       FROM sales_bill_items sbi
+       LEFT JOIN products p ON p.id = sbi.product_id
+       LEFT JOIN LATERAL (
+         SELECT SUM(COALESCE(sri.qty, 0))::numeric AS returned_qty
+         FROM sales_return_items sri
+         INNER JOIN sales_returns sr ON sr.id = sri.sales_return_id
+         WHERE sr.original_bill_id = sbi.sales_bill_id
+           AND sri.product_id = sbi.product_id
+           AND sr.status <> 'declined'
+       ) returned ON TRUE
+       WHERE sbi.sales_bill_id = $1
+         AND sbi.product_id = ANY($2::bigint[])
+       GROUP BY sbi.product_id, p.name, returned.returned_qty`,
+      [bill.id, Array.from(requestedByProduct.keys())],
+    );
+
+    const soldByProduct = new Map(soldQtyRes.rows.map((row) => [Number(row.product_id), row]));
+    for (const [productId, requestedQty] of requestedByProduct.entries()) {
+      const row = soldByProduct.get(productId);
+      const soldQty = roundQty(row?.sold_qty);
+      const returnedQty = roundQty(row?.returned_qty);
+      const remainingQty = Math.max(0, roundQty(soldQty - returnedQty));
+      if (!row || requestedQty > remainingQty) {
+        return errorResponse(
+          `${row?.product_name || "Product"} return qty cannot exceed purchased qty. Purchased: ${soldQty}, already returned/requested: ${returnedQty}, allowed: ${remainingQty}`,
+          400,
+        );
+      }
     }
 
     // Create approval request. Stock is updated only after admin/super admin approval.

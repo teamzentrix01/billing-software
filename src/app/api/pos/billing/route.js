@@ -342,6 +342,8 @@ export async function GET(req) {
         sbi.*,
         COALESCE(sbi.product_name, p.name) AS name,
         COALESCE(sbi.sku, p.sku) AS sku,
+        COALESCE(return_summary.returned_qty, 0) AS returned_qty,
+        GREATEST(COALESCE(sbi.qty, 0) - COALESCE(return_summary.returned_qty, 0), 0) AS returnable_qty,
         return_state.status AS return_status,
         return_state.return_id,
         return_state.return_number,
@@ -365,6 +367,14 @@ export async function GET(req) {
           sr.updated_at DESC
         LIMIT 1
       ) return_state ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT SUM(COALESCE(sri.qty, 0)) AS returned_qty
+        FROM sales_return_items sri
+        INNER JOIN sales_returns sr ON sr.id = sri.sales_return_id
+        WHERE sr.original_bill_id = sbi.sales_bill_id
+          AND sri.product_id = sbi.product_id
+          AND sr.status <> 'declined'
+      ) return_summary ON TRUE
       WHERE sbi.sales_bill_id = $1
     `, [bill.id]);
     const paymentsRes = await query(

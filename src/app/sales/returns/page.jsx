@@ -183,16 +183,37 @@ export default function ReturnsPage() {
       showToast(getReturnStatusMessage(item), 'error');
       return;
     }
+    const maxQty = getMaxReturnQty(item);
+    if (maxQty <= 0) {
+      showToast(`${item.name || 'Product'} has no returnable quantity left`, 'error');
+      return;
+    }
     if (selectedItems.find(i => i.product_id === item.product_id)) {
       setSelectedItems(selectedItems.filter(i => i.product_id !== item.product_id));
     } else {
-      setSelectedItems([...selectedItems, { ...item, return_qty: 1 }]);
+      setSelectedItems([...selectedItems, { ...item, return_qty: Math.min(1, maxQty) }]);
     }
   }
 
+  function getMaxReturnQty(item) {
+    const explicit = Number(item?.returnable_qty);
+    const fallback = Number(item?.qty);
+    const max = Number.isFinite(explicit) ? explicit : fallback;
+    return Math.max(0, Math.floor(Number(max) || 0));
+  }
+
+  function clampReturnQty(productId, value) {
+    const sourceItem = searchedBill?.items?.find((item) => Number(item.product_id) === Number(productId));
+    const maxQty = getMaxReturnQty(sourceItem);
+    const numeric = parseInt(value, 10);
+    if (!Number.isFinite(numeric)) return maxQty > 0 ? 1 : 0;
+    return Math.max(1, Math.min(numeric, maxQty));
+  }
+
   function updateReturnQty(productId, qty) {
+    const normalizedQty = clampReturnQty(productId, qty);
     setSelectedItems(selectedItems.map(item =>
-      item.product_id === productId ? { ...item, return_qty: qty } : item
+      Number(item.product_id) === Number(productId) ? { ...item, return_qty: normalizedQty } : item
     ));
   }
 
@@ -204,6 +225,16 @@ export default function ReturnsPage() {
     const blockedItem = selectedItems.find((item) => item.return_status && item.return_status !== 'declined');
     if (blockedItem) {
       showToast(getReturnStatusMessage(blockedItem), 'error');
+      return;
+    }
+    const invalidQtyItem = selectedItems.find((item) => {
+      const sourceItem = searchedBill?.items?.find((billItem) => Number(billItem.product_id) === Number(item.product_id));
+      const maxQty = getMaxReturnQty(sourceItem);
+      const returnQty = Number(item.return_qty);
+      return !Number.isFinite(returnQty) || returnQty <= 0 || returnQty > maxQty;
+    });
+    if (invalidQtyItem) {
+      showToast(`${invalidQtyItem.name || 'Product'} return qty cannot exceed purchased qty`, 'error');
       return;
     }
 
@@ -775,7 +806,9 @@ export default function ReturnsPage() {
                             <h4 className="font-semibold text-gray-900">{item.name}</h4>
                             <p className="text-sm text-gray-600">SKU: {item.sku}</p>
                             <p className="text-sm text-gray-700">
-                              Qty Purchased: {item.qty} | Price: Rs.{parseFloat(item.selling_price).toFixed(2)}
+                              Qty Purchased: {item.qty}
+                              {Number(item.returned_qty || 0) > 0 ? ` | Already returned/requested: ${item.returned_qty}` : ''}
+                              {' '}| Returnable: {getMaxReturnQty(item)} | Price: Rs.{parseFloat(item.selling_price).toFixed(2)}
                             </p>
                             {item.return_status && item.return_status !== 'declined' && (
                               <div className="mt-2 rounded border border-amber-200 bg-white px-2 py-1 text-xs font-semibold text-amber-700">
@@ -790,9 +823,36 @@ export default function ReturnsPage() {
                                 <input
                                   type="number"
                                   min="1"
-                                  max={item.qty}
+                                  step="1"
+                                  max={getMaxReturnQty(item)}
                                   value={selectedItems.find(i => i.product_id === item.product_id)?.return_qty || 1}
-                                  onChange={(e) => updateReturnQty(item.product_id, parseInt(e.target.value))}
+                                  onKeyDown={(e) => {
+                                    if (['e', 'E', '+', '-', '.'].includes(e.key)) e.preventDefault();
+                                  }}
+                                  onPaste={(e) => {
+                                    const pasted = e.clipboardData.getData('text');
+                                    const nextValue = clampReturnQty(item.product_id, pasted);
+                                    e.preventDefault();
+                                    updateReturnQty(item.product_id, nextValue);
+                                    if (Number(pasted) > getMaxReturnQty(item)) {
+                                      showToast(`Maximum return qty is ${getMaxReturnQty(item)}`, 'error');
+                                    }
+                                  }}
+                                  onInput={(e) => {
+                                    const maxQty = getMaxReturnQty(item);
+                                    const typed = Number(e.currentTarget.value);
+                                    if (Number.isFinite(typed) && typed > maxQty) {
+                                      e.currentTarget.value = String(maxQty);
+                                    }
+                                  }}
+                                  onChange={(e) => {
+                                    const maxQty = getMaxReturnQty(item);
+                                    if (Number(e.target.value) > maxQty) {
+                                      showToast(`Maximum return qty is ${maxQty}`, 'error');
+                                    }
+                                    updateReturnQty(item.product_id, e.target.value);
+                                  }}
+                                  onBlur={(e) => updateReturnQty(item.product_id, e.target.value)}
                                   className="w-full border border-gray-300 rounded px-2 py-1 text-sm text-gray-900"
                                 />
                               </div>
