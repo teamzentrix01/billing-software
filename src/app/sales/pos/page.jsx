@@ -675,6 +675,7 @@ export default function POSPage() {
   const [scannerStatus, setScannerStatus] = useState("");
   const [holdDetectModal, setHoldDetectModal] = useState(false);
   const [detectedHeldBills, setDetectedHeldBills] = useState([]);
+  const [activeTab, setActiveTab] = useState("catalog"); // "catalog" | "cart"
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const scannerStopRef = useRef(false);
@@ -2857,10 +2858,48 @@ export default function POSPage() {
           </div>
         ) : null}
 
+        {/* Mobile Tab Bar Switcher */}
+        <div className="flex border-b border-slate-200 bg-white rounded-2xl p-1 mb-3 lg:hidden shadow-sm">
+          <button
+            type="button"
+            onClick={() => setActiveTab("catalog")}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all ${
+              activeTab === "catalog"
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/15"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            📦 Products
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+              activeTab === "catalog" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"
+            }`}>
+              {filteredProducts.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("cart")}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-black uppercase tracking-wider rounded-xl transition-all ${
+              activeTab === "cart"
+                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/15"
+                : "text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            🛒 Cart
+            {cart.length > 0 && (
+              <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${
+                activeTab === "cart" ? "bg-white/25 text-white" : "bg-indigo-600 text-white"
+              }`}>
+                {cart.length}
+              </span>
+            )}
+          </button>
+        </div>
+
         {/* ── MAIN GRID ── */}
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_330px] 2xl:grid-cols-[minmax(0,1fr)_370px]">
           {/* ══ LEFT: PRODUCTS PANEL ══ */}
-          <div className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className={`flex min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm ${activeTab === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
             {/* Search strip */}
             <div className="px-4 pt-4 pb-3 border-b border-slate-100">
               <div className="flex items-center justify-between mb-3">
@@ -3011,7 +3050,7 @@ export default function POSPage() {
           </div>
 
           {/* ══ RIGHT: ORDER PANEL ══ */}
-          <aside className="flex min-w-0 flex-col gap-3">
+          <aside className={`flex min-w-0 flex-col gap-3 ${activeTab === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
             {/* ── CART ── */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">

@@ -138,9 +138,12 @@ export default function Sidebar({
 
   return (
     <>
-      {mobileOpen && (
-        <div className="sidebar-overlay md:hidden" onClick={onMobileClose} />
-      )}
+      <div
+        className={`sidebar-overlay md:hidden ${
+          mobileOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+        }`}
+        onClick={onMobileClose}
+      />
 
       <div className={`
         sidebar-drawer fixed left-0 top-0 h-full w-[280px] bg-white z-50 shadow-2xl

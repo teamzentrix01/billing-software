@@ -281,3 +281,17 @@ button {
     -webkit-overflow-scrolling: touch;
   }
 }
+
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(4px);
+  z-index: 40;
+  transition: opacity 300ms ease-in-out;
+}
+
+.sidebar-drawer {
+  transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
