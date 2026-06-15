@@ -865,28 +865,42 @@ async function downloadTransferWorkbook(transfer) {
     Number(transfer.other_charges || 0),
     transfer.remarks || '',
   ];
-  const summaryRows = [summaryHeaders, summaryValues];
+  
+  const itemHeaders = [
+    'S.No.',
+    'Product',
+    'Barcode',
+    'Batch No',
+    'Qty',
+    'MRP',
+    'Tax',
+    'Expiry',
+  ];
   const itemRows = (transfer.items || []).map((item, index) => {
     const meta = typeof item.meta === 'object' && item.meta ? item.meta : {};
-    return {
-      'S.No.': index + 1,
-      Product: item.product_name || item.name || '',
-      SKU: item.sku || '',
-      Barcode: item.barcode || '',
-      'Batch No': item.batch_no || meta.batchNo || meta.batch_no || '',
-      Expiry: formatDate(item.expiry_date || meta.expiryDate || meta.expiry_date),
-      Qty: Number(item.qty || 0),
-      MRP: Number(item.mrp || 0),
-      'Selling Price': Number(item.selling_price || 0),
-      'Destination MRP': Number(item.destination_mrp || 0),
-      'Cost Price': Number(item.cost_price || 0),
-      Tax: Number(item.tax_value || 0),
-      'Line Cost': Number(item.qty || 0) * Number(item.cost_price || 0),
-    };
+    return [
+      index + 1,
+      item.product_name || item.name || '',
+      item.barcode || item.sku || '',
+      item.batch_no || meta.batchNo || meta.batch_no || '',
+      Number(item.qty || 0),
+      Number(item.mrp || 0),
+      Number(item.tax_value || 0),
+      formatDate(item.expiry_date || meta.expiryDate || meta.expiry_date),
+    ];
   });
+
+  const combinedRows = [
+    summaryHeaders,
+    summaryValues,
+    [], // Blank separator row
+    itemHeaders,
+    ...itemRows
+  ];
+
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summaryRows), 'Summary');
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(itemRows), 'Products');
+  const sheet = XLSX.utils.aoa_to_sheet(combinedRows);
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Details');
   XLSX.writeFile(workbook, `stock-transfer-${transfer.transactionId || transfer.id || 'entry'}.xlsx`);
 }
 
@@ -953,32 +967,32 @@ function StockTransferPreviewDialog({ transfer, loading, onClose }) {
                   <thead className="bg-slate-50 text-left text-[11px] font-bold uppercase text-slate-500">
                     <tr>
                       <th className="px-3 py-2">Product</th>
+                      <th className="px-3 py-2">Barcode</th>
+                      <th className="px-3 py-2">Batch</th>
                       <th className="px-3 py-2">Qty</th>
                       <th className="px-3 py-2">MRP</th>
-                      <th className="px-3 py-2">Selling</th>
-                      <th className="px-3 py-2">Cost</th>
                       <th className="px-3 py-2">Tax</th>
-                      <th className="px-3 py-2">Line Cost</th>
+                      <th className="px-3 py-2">Expiry</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {items.length ? (
-                      items.map((item) => (
-                        <tr key={item.id || item.product_id}>
-                          <td className="px-3 py-3 text-slate-900">
-                            <div className="font-semibold">{item.product_name || item.name || 'Product'}</div>
-                            <div className="text-[11px] text-slate-500">SKU: {item.sku || '-'}</div>
-                          </td>
-                          <td className="px-3 py-3 text-slate-700">{Number(item.qty || 0)}</td>
-                          <td className="px-3 py-3 text-slate-700">{formatCurrency(item.mrp)}</td>
-                          <td className="px-3 py-3 text-slate-700">{formatCurrency(item.selling_price)}</td>
-                          <td className="px-3 py-3 text-slate-700">{formatCurrency(item.cost_price)}</td>
-                          <td className="px-3 py-3 text-slate-700">{formatCurrency(item.tax_value)}</td>
-                          <td className="px-3 py-3 font-semibold text-slate-900">
-                            {formatCurrency(Number(item.qty || 0) * Number(item.cost_price || 0))}
-                          </td>
-                        </tr>
-                      ))
+                      items.map((item) => {
+                        const meta = typeof item.meta === 'object' && item.meta ? item.meta : {};
+                        return (
+                          <tr key={item.id || item.product_id}>
+                            <td className="px-3 py-3 text-slate-900 font-semibold">
+                              {item.product_name || item.name || 'Product'}
+                            </td>
+                            <td className="px-3 py-3 text-slate-600">{item.barcode || item.sku || '-'}</td>
+                            <td className="px-3 py-3 text-slate-600">{item.batch_no || meta.batchNo || meta.batch_no || '-'}</td>
+                            <td className="px-3 py-3 text-slate-700">{Number(item.qty || 0)}</td>
+                            <td className="px-3 py-3 text-slate-700">Rs. {formatCurrency(item.mrp)}</td>
+                            <td className="px-3 py-3 text-slate-700">Rs. {formatCurrency(item.tax_value)}</td>
+                            <td className="px-3 py-3 text-slate-600">{formatDate(item.expiry_date || meta.expiryDate || meta.expiry_date)}</td>
+                          </tr>
+                        );
+                      })
                     ) : (
                       <tr>
                         <td className="px-3 py-8 text-center text-slate-500" colSpan={7}>

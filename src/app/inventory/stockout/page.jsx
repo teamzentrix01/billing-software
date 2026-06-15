@@ -658,23 +658,39 @@ async function downloadInventoryEntryWorkbook(kind, entry) {
     entry.remarks || '',
     entry.reason || '',
   ];
-  const summaryRows = [summaryHeaders, summaryValues];
-  const itemRows = (entry.items || []).map((item, index) => ({
-    'S.No.': index + 1,
-    Product: item.product_name || item.name || '',
-    SKU: item.sku || '',
-    Barcode: item.barcode || '',
-    'Batch No': item.batch_no || '',
-    Expiry: formatDate(item.expiry_date),
-    Qty: Number(item.qty || 0),
-    'Cost Price': Number(item.cost_price || 0),
-    MRP: Number(item.mrp || 0),
-    'Selling Price': Number(item.selling_price || 0),
-    Tax: Number(item.tax_value || 0),
-  }));
+  
+  const itemHeaders = [
+    'S.No.',
+    'Product',
+    'Barcode',
+    'Batch No',
+    'Qty',
+    'MRP',
+    'Tax',
+    'Expiry',
+  ];
+  const itemRows = (entry.items || []).map((item, index) => [
+    index + 1,
+    item.product_name || item.name || '',
+    item.barcode || item.sku || '',
+    item.batch_no || '',
+    Number(item.qty || 0),
+    Number(item.mrp || 0),
+    Number(item.tax_value || 0),
+    formatDate(item.expiry_date),
+  ]);
+
+  const combinedRows = [
+    summaryHeaders,
+    summaryValues,
+    [], // Blank separator row
+    itemHeaders,
+    ...itemRows
+  ];
+
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summaryRows), 'Summary');
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(itemRows), 'Products');
+  const sheet = XLSX.utils.aoa_to_sheet(combinedRows);
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Details');
   XLSX.writeFile(workbook, `${kind}-${entry.transactionId || entry.id || 'entry'}.xlsx`);
 }
 
@@ -734,7 +750,7 @@ function InventoryItemsTable({ items }) {
         <table className="min-w-full text-left text-sm">
           <thead className="bg-slate-50 text-[11px] uppercase text-slate-500">
             <tr>
-              {['Product', 'SKU', 'Barcode', 'Batch', 'Expiry', 'Qty', 'Cost', 'MRP', 'Selling', 'Tax'].map((header) => (
+              {['Product', 'Barcode', 'Batch', 'Qty', 'MRP', 'Tax', 'Expiry'].map((header) => (
                 <th key={header} className="px-3 py-3">{header}</th>
               ))}
             </tr>
@@ -743,18 +759,15 @@ function InventoryItemsTable({ items }) {
             {items.length ? items.map((item, index) => (
               <tr key={item.id || `${item.product_id}-${index}`}>
                 <td className="px-3 py-3 font-semibold text-slate-900">{item.product_name || item.name || '-'}</td>
-                <td className="px-3 py-3 text-slate-600">{item.sku || '-'}</td>
-                <td className="px-3 py-3 text-slate-600">{item.barcode || '-'}</td>
+                <td className="px-3 py-3 text-slate-600">{item.barcode || item.sku || '-'}</td>
                 <td className="px-3 py-3 text-slate-600">{item.batch_no || '-'}</td>
-                <td className="px-3 py-3 text-slate-600">{formatDate(item.expiry_date)}</td>
                 <td className="px-3 py-3 text-slate-700">{Number(item.qty || 0)}</td>
-                <td className="px-3 py-3 text-slate-700">Rs. {formatCurrency(item.cost_price)}</td>
                 <td className="px-3 py-3 text-slate-700">Rs. {formatCurrency(item.mrp)}</td>
-                <td className="px-3 py-3 text-slate-700">Rs. {formatCurrency(item.selling_price)}</td>
                 <td className="px-3 py-3 text-slate-700">Rs. {formatCurrency(item.tax_value)}</td>
+                <td className="px-3 py-3 text-slate-600">{formatDate(item.expiry_date)}</td>
               </tr>
             )) : (
-              <tr><td colSpan={10} className="px-3 py-10 text-center text-slate-500">No product rows found.</td></tr>
+              <tr><td colSpan={7} className="px-3 py-10 text-center text-slate-500">No product rows found.</td></tr>
             )}
           </tbody>
         </table>

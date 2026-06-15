@@ -56,7 +56,7 @@ export async function GET(request, { params }) {
         ib.batch_no,
         ib.expiry_date,
         COALESCE(ib.available_qty, 0) AS available_qty,
-        COALESCE(ib.mrp, 0) AS mrp,
+        COALESCE(NULLIF(ib.meta->>'mrp', '')::numeric, 0) AS mrp,
         COALESCE(NULLIF(ib.meta->>'sellingPrice', '')::numeric, 0) AS selling_price
       FROM stock_validation_items svi
       LEFT JOIN products p ON p.id = svi.product_id
