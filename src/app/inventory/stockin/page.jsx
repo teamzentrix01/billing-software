@@ -93,7 +93,7 @@ function formatCost(value) {
 
 function formatUnitPrice(value) {
   const n = Number(value || 0);
-  return `â‚¹${n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 9 })}`;
+  return `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 9 })}`;
 }
 
 function mapRecordsToTable(records) {
@@ -1386,6 +1386,22 @@ export default function StockInPage() {
     }
   };
 
+  const downloadEntryExcel = async (row) => {
+    if (!row?._id) return;
+    try {
+      const res = await fetch(
+        `/api/inventory/stockin/${encodeURIComponent(row._id)}`,
+        { cache: "no-store" }
+      );
+      const details = await res.json();
+      if (!res.ok) throw new Error(details.error || "Failed to load stock in details");
+      await downloadInventoryEntryWorkbook("stock-in", details);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "Failed to download stock in Excel");
+    }
+  };
+
   const handleDownloadBulkTemplate = async () => {
     if (!templateFilters.vendorId) {
       alert("Please select a vendor first.");
@@ -1756,6 +1772,13 @@ export default function StockInPage() {
               >
                 Delete
               </button>
+              <button
+                type="button"
+                onClick={() => downloadEntryExcel(row)}
+                className="rounded-lg border border-emerald-200 px-3 py-1.5 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-50"
+              >
+                Excel
+              </button>
             </div>
           ) : null
         }
@@ -1865,10 +1888,10 @@ export default function StockInPage() {
                   <thead>
                     <tr className="border-b border-gray-100 text-left text-[11px] font-bold uppercase tracking-wide text-gray-500">
                       <th className="px-3 py-2">Product</th>
-                      <th className="px-3 py-2">SKU</th>
+                      <th className="px-3 py-2">Barcode</th>
                       <th className="px-3 py-2">Batch</th>
                       <th className="px-3 py-2">Qty</th>
-                      <th className="px-3 py-2">Cost</th>
+                      <th className="px-3 py-2">MRP</th>
                       <th className="px-3 py-2">Tax</th>
                       <th className="px-3 py-2">Expiry</th>
                     </tr>
@@ -1882,11 +1905,11 @@ export default function StockInPage() {
                         <td className="px-3 py-2 font-semibold text-gray-900">
                           {item.name}
                         </td>
-                        <td className="px-3 py-2">{item.sku || "—"}</td>
+                        <td className="px-3 py-2">{item.barcode || item.sku || "—"}</td>
                         <td className="px-3 py-2">{item.batch_no || "—"}</td>
                         <td className="px-3 py-2">{item.qty}</td>
                         <td className="px-3 py-2">
-                          {formatUnitPrice(item.cost_price)}
+                          {formatCost(item.mrp)}
                         </td>
                         <td className="px-3 py-2">
                           {formatCost(item.tax_value)}
@@ -2564,5 +2587,58 @@ export default function StockInPage() {
         </div>
       )}
     </>
+  );
+}
+
+async function downloadInventoryEntryWorkbook(kind, entry) {
+  const XLSX = await import("xlsx");
+  const summaryHeaders = [
+    "Transaction ID",
+    "Invoice Number",
+    "Invoice Date",
+    "Destination",
+    "Vendor",
+    "Status",
+    "Other Charges",
+    "Remarks",
+  ];
+  const summaryValues = [
+    entry.transactionId || entry.id || "",
+    entry.invoice_number || "",
+    formatDate(entry.invoice_date),
+    entry.destinationName || entry.destination || "",
+    entry.vendor_name || "",
+    entry.status || "",
+    Number(entry.other_charges || 0),
+    entry.remarks || "",
+  ];
+  const summaryRows = [summaryHeaders, summaryValues];
+  const itemRows = (entry.items || []).map((item, index) => ({
+    "S.No.": index + 1,
+    Product: item.name || "",
+    SKU: item.sku || "",
+    Barcode: item.barcode || "",
+    "Batch No": item.batch_no || "",
+    Expiry: formatDate(item.expiry_date),
+    Qty: Number(item.qty || 0),
+    "Cost Price": Number(item.cost_price || 0),
+    MRP: Number(item.mrp || 0),
+    "Selling Price": Number(item.selling_price || 0),
+    Tax: Number(item.tax_value || 0),
+  }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet(summaryRows),
+    "Summary",
+  );
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.json_to_sheet(itemRows),
+    "Products",
+  );
+  XLSX.writeFile(
+    workbook,
+    `${kind}-${entry.transactionId || entry.id || "entry"}.xlsx`,
   );
 }

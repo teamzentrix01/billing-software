@@ -52,6 +52,11 @@ export async function ensureStockOutSchema() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    ALTER TABLE stock_out_items
+      ADD COLUMN IF NOT EXISTS batch_id BIGINT,
+      ADD COLUMN IF NOT EXISTS batch_no VARCHAR(120),
+      ADD COLUMN IF NOT EXISTS expiry_date DATE;
+
     CREATE INDEX IF NOT EXISTS idx_stock_out_status ON stock_out(status);
     CREATE INDEX IF NOT EXISTS idx_stock_out_items_stock_out_id ON stock_out_items(stock_out_id);
   `);

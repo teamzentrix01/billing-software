@@ -601,6 +601,17 @@ export default function StockTransferPage() {
     }
   };
 
+  const downloadEntryExcel = async (row) => {
+    if (!row?._id) return;
+    try {
+      const transfer = await fetchTransferDetails(row._id);
+      await downloadTransferWorkbook(transfer);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to download stock transfer Excel');
+    }
+  };
+
   const confirmRevert = async () => {
     const row = pendingRevert;
     const id = row?._id;
@@ -691,6 +702,13 @@ export default function StockTransferPage() {
               className="rounded-lg border border-red-200 px-3 py-1.5 text-[12px] font-semibold text-red-600 hover:bg-red-50"
             >
               Revert
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadEntryExcel(row)}
+              className="rounded-lg border border-emerald-200 px-3 py-1.5 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-50"
+            >
+              Excel
             </button>
           </div>
         )}
@@ -823,6 +841,53 @@ export default function StockTransferPage() {
       )}
     </>
   );
+}
+
+async function downloadTransferWorkbook(transfer) {
+  const XLSX = await import('xlsx');
+  const summaryHeaders = [
+    'Transaction ID',
+    'Invoice Number',
+    'Invoice Date',
+    'Source',
+    'Destination',
+    'Status',
+    'Other Charges',
+    'Remarks',
+  ];
+  const summaryValues = [
+    transfer.transactionId || transfer.id || '',
+    transfer.invoice_number || '',
+    formatDate(transfer.invoice_date),
+    transfer.sourceName || transfer.source || '',
+    transfer.destinationName || transfer.destination || '',
+    transfer.status || '',
+    Number(transfer.other_charges || 0),
+    transfer.remarks || '',
+  ];
+  const summaryRows = [summaryHeaders, summaryValues];
+  const itemRows = (transfer.items || []).map((item, index) => {
+    const meta = typeof item.meta === 'object' && item.meta ? item.meta : {};
+    return {
+      'S.No.': index + 1,
+      Product: item.product_name || item.name || '',
+      SKU: item.sku || '',
+      Barcode: item.barcode || '',
+      'Batch No': item.batch_no || meta.batchNo || meta.batch_no || '',
+      Expiry: formatDate(item.expiry_date || meta.expiryDate || meta.expiry_date),
+      Qty: Number(item.qty || 0),
+      MRP: Number(item.mrp || 0),
+      'Selling Price': Number(item.selling_price || 0),
+      'Destination MRP': Number(item.destination_mrp || 0),
+      'Cost Price': Number(item.cost_price || 0),
+      Tax: Number(item.tax_value || 0),
+      'Line Cost': Number(item.qty || 0) * Number(item.cost_price || 0),
+    };
+  });
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summaryRows), 'Summary');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(itemRows), 'Products');
+  XLSX.writeFile(workbook, `stock-transfer-${transfer.transactionId || transfer.id || 'entry'}.xlsx`);
 }
 
 function StockTransferPreviewDialog({ transfer, loading, onClose }) {

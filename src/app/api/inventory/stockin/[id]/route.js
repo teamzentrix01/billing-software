@@ -221,6 +221,7 @@ export async function GET(request, { params }) {
         product_id: item.product_id,
         name: item.product_name,
         sku: item.sku || item.barcode || item.catalog_product_id || "",
+        barcode: item.barcode || "",
         qty: Number(item.qty || 0),
         cost_price: Number(item.cost_price || 0),
         tax_value: Number(

@@ -45,6 +45,24 @@ async function postStockOut(payload) {
   return data;
 }
 
+async function fetchStockOutDetails(id) {
+  const res = await fetch(`/api/inventory/stockout/${encodeURIComponent(id)}`, { cache: 'no-store' });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load stock out');
+  return data;
+}
+
+async function updateStockOutDetails(id, payload) {
+  const res = await fetch(`/api/inventory/stockout/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to update stock out');
+  return data;
+}
+
 const tableHeaders = [
   'Transaction ID',
   'Invoice Number',
@@ -74,6 +92,7 @@ function formatCurrency(value) {
 
 function mapRecordsToTable(records) {
   return (records || []).map((row) => ({
+    _id: row.id,
     'Transaction ID': row.transactionId ? `#${row.transactionId}` : `#STKO-${row.id}`,
     'Invoice Number': row.invoiceNumber || '-',
     Destination: row.destination || 'All',
@@ -104,6 +123,20 @@ export default function StockOutPage() {
   const [tableData, setTableData] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
   const [listFilters, setListFilters] = useState({ dateFrom: '', dateTo: '', source: '' });
+  const [previewEntry, setPreviewEntry] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [editEntry, setEditEntry] = useState(null);
+  const [editForm, setEditForm] = useState({
+    vendor: '',
+    invoice_date: '',
+    invoice_number: '',
+    purchase_order_id: '',
+    grn_id: '',
+    other_charges: '',
+    remarks: '',
+    reason: '',
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const visibleTableData = useMemo(() => {
     return tableData.filter((row) => {
@@ -242,6 +275,69 @@ export default function StockOutPage() {
     }
   };
 
+  const openPreview = async (row) => {
+    if (!row?._id) return;
+    setPreviewLoading(true);
+    setPreviewEntry({ id: row._id, transactionId: String(row['Transaction ID'] || '').replace(/^#/, '') });
+    try {
+      setPreviewEntry(await fetchStockOutDetails(row._id));
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to load stock out preview');
+      setPreviewEntry(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const openEdit = async (row) => {
+    if (!row?._id) return;
+    try {
+      const details = await fetchStockOutDetails(row._id);
+      setEditEntry(details);
+      setEditForm({
+        vendor: details.vendor_name || '',
+        invoice_date: details.invoice_date || '',
+        invoice_number: details.invoice_number || '',
+        purchase_order_id: details.purchase_order_id || '',
+        grn_id: details.grn_id || '',
+        other_charges: details.other_charges ?? '',
+        remarks: details.remarks || '',
+        reason: details.reason || '',
+      });
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to load stock out');
+    }
+  };
+
+  const saveEdit = async () => {
+    if (!editEntry?.id) return;
+    setSavingEdit(true);
+    try {
+      await updateStockOutDetails(editEntry.id, editForm);
+      setEditEntry(null);
+      alert('Stock out updated successfully.');
+      loadList();
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to update stock out');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const downloadEntryExcel = async (row) => {
+    if (!row?._id) return;
+    try {
+      const details = await fetchStockOutDetails(row._id);
+      await downloadInventoryEntryWorkbook('stock-out', details);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to download stock out file');
+    }
+  };
+
   return (
     <>
       <InventoryShell
@@ -289,6 +385,19 @@ export default function StockOutPage() {
         tableHeaders={tableHeaders}
         tableData={loadingList ? [] : visibleTableData}
         emptyMessage={loadingList ? 'Loading records...' : 'No Records Found'}
+        rowActions={(row) => (
+          <div className="flex flex-wrap justify-end gap-2">
+            <button type="button" onClick={() => openPreview(row)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50">
+              Preview
+            </button>
+            <button type="button" onClick={() => openEdit(row)} className="rounded-lg border border-blue-200 px-3 py-1.5 text-[12px] font-semibold text-blue-700 hover:bg-blue-50">
+              Edit
+            </button>
+            <button type="button" onClick={() => downloadEntryExcel(row)} className="rounded-lg border border-emerald-200 px-3 py-1.5 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-50">
+              Excel
+            </button>
+          </div>
+        )}
       />
 
       {showModal && (
@@ -495,7 +604,191 @@ export default function StockOutPage() {
           }}
         />
       )}
+
+      {(previewEntry || previewLoading) && (
+        <InventoryEntryPreviewDialog
+          title="Stock Out Preview"
+          entry={previewEntry}
+          loading={previewLoading}
+          onClose={() => {
+            if (!previewLoading) setPreviewEntry(null);
+          }}
+        />
+      )}
+
+      {editEntry && (
+        <StockOutEditDialog
+          entry={editEntry}
+          form={editForm}
+          onChange={setEditForm}
+          saving={savingEdit}
+          onCancel={() => {
+            if (!savingEdit) setEditEntry(null);
+          }}
+          onSave={saveEdit}
+        />
+      )}
     </>
+  );
+}
+
+async function downloadInventoryEntryWorkbook(kind, entry) {
+  const XLSX = await import('xlsx');
+  const summaryHeaders = [
+    'Transaction ID',
+    'Invoice Number',
+    'Invoice Date',
+    'Destination',
+    'Vendor',
+    'Purchase Order ID',
+    'GRN ID',
+    'Other Charges',
+    'Remarks',
+    'Reason',
+  ];
+  const summaryValues = [
+    entry.transactionId || entry.id || '',
+    entry.invoice_number || '',
+    formatDate(entry.invoice_date),
+    entry.destinationName || entry.destination || '',
+    entry.vendor_name || '',
+    entry.purchase_order_id || '',
+    entry.grn_id || '',
+    Number(entry.other_charges || 0),
+    entry.remarks || '',
+    entry.reason || '',
+  ];
+  const summaryRows = [summaryHeaders, summaryValues];
+  const itemRows = (entry.items || []).map((item, index) => ({
+    'S.No.': index + 1,
+    Product: item.product_name || item.name || '',
+    SKU: item.sku || '',
+    Barcode: item.barcode || '',
+    'Batch No': item.batch_no || '',
+    Expiry: formatDate(item.expiry_date),
+    Qty: Number(item.qty || 0),
+    'Cost Price': Number(item.cost_price || 0),
+    MRP: Number(item.mrp || 0),
+    'Selling Price': Number(item.selling_price || 0),
+    Tax: Number(item.tax_value || 0),
+  }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summaryRows), 'Summary');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(itemRows), 'Products');
+  XLSX.writeFile(workbook, `${kind}-${entry.transactionId || entry.id || 'entry'}.xlsx`);
+}
+
+function InventoryEntryPreviewDialog({ title, entry, loading, onClose }) {
+  const items = entry?.items || [];
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4">
+      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+          <div>
+            <h3 className="text-lg font-black text-slate-950">{title}</h3>
+            <p className="mt-1 text-xs font-semibold text-slate-500">{entry?.transactionId || 'Loading entry details...'}</p>
+          </div>
+          <button type="button" onClick={onClose} disabled={loading} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50">
+            <i className="ti ti-x text-[18px]" />
+          </button>
+        </div>
+        <div className="overflow-auto p-6">
+          {loading && !items.length ? (
+            <div className="py-16 text-center text-sm font-semibold text-slate-500">Loading details...</div>
+          ) : (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <PreviewStat label="Invoice" value={entry?.invoice_number || '-'} />
+                <PreviewStat label="Date" value={formatDate(entry?.invoice_date)} />
+                <PreviewStat label="Destination" value={entry?.destinationName || '-'} />
+                <PreviewStat label="Items" value={items.length} />
+              </div>
+              <div className="mt-5 grid gap-3 text-sm text-slate-700 md:grid-cols-2">
+                <div><span className="font-bold text-slate-500">Vendor:</span> {entry?.vendor_name || '-'}</div>
+                <div><span className="font-bold text-slate-500">PO/GRN:</span> {[entry?.purchase_order_id, entry?.grn_id].filter(Boolean).join(' / ') || '-'}</div>
+                <div><span className="font-bold text-slate-500">Reason:</span> {entry?.reason || '-'}</div>
+                <div><span className="font-bold text-slate-500">Remarks:</span> {entry?.remarks || '-'}</div>
+              </div>
+              <InventoryItemsTable items={items} />
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PreviewStat({ label, value }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+      <div className="text-[11px] font-bold uppercase text-slate-500">{label}</div>
+      <div className="mt-1 truncate text-sm font-black text-slate-900">{value || '-'}</div>
+    </div>
+  );
+}
+
+function InventoryItemsTable({ items }) {
+  return (
+    <div className="mt-6 overflow-hidden rounded-lg border border-slate-200">
+      <div className="max-h-[44vh] overflow-auto">
+        <table className="min-w-full text-left text-sm">
+          <thead className="bg-slate-50 text-[11px] uppercase text-slate-500">
+            <tr>
+              {['Product', 'SKU', 'Barcode', 'Batch', 'Expiry', 'Qty', 'Cost', 'MRP', 'Selling', 'Tax'].map((header) => (
+                <th key={header} className="px-3 py-3">{header}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {items.length ? items.map((item, index) => (
+              <tr key={item.id || `${item.product_id}-${index}`}>
+                <td className="px-3 py-3 font-semibold text-slate-900">{item.product_name || item.name || '-'}</td>
+                <td className="px-3 py-3 text-slate-600">{item.sku || '-'}</td>
+                <td className="px-3 py-3 text-slate-600">{item.barcode || '-'}</td>
+                <td className="px-3 py-3 text-slate-600">{item.batch_no || '-'}</td>
+                <td className="px-3 py-3 text-slate-600">{formatDate(item.expiry_date)}</td>
+                <td className="px-3 py-3 text-slate-700">{Number(item.qty || 0)}</td>
+                <td className="px-3 py-3 text-slate-700">Rs. {formatCurrency(item.cost_price)}</td>
+                <td className="px-3 py-3 text-slate-700">Rs. {formatCurrency(item.mrp)}</td>
+                <td className="px-3 py-3 text-slate-700">Rs. {formatCurrency(item.selling_price)}</td>
+                <td className="px-3 py-3 text-slate-700">Rs. {formatCurrency(item.tax_value)}</td>
+              </tr>
+            )) : (
+              <tr><td colSpan={10} className="px-3 py-10 text-center text-slate-500">No product rows found.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function StockOutEditDialog({ form, onChange, saving, onCancel, onSave }) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4">
+      <div className="w-full max-w-3xl rounded-xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
+          <h3 className="text-lg font-black text-slate-950">Edit Stock Out</h3>
+          <button type="button" onClick={onCancel} disabled={saving} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50">
+            <i className="ti ti-x text-[18px]" />
+          </button>
+        </div>
+        <div className="grid gap-4 p-6 md:grid-cols-2">
+          <Field label="Vendor"><input value={form.vendor} onChange={(e) => onChange((v) => ({ ...v, vendor: e.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></Field>
+          <Field label="Invoice Date"><input type="date" value={form.invoice_date} onChange={(e) => onChange((v) => ({ ...v, invoice_date: e.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></Field>
+          <Field label="Invoice Number"><input value={form.invoice_number} onChange={(e) => onChange((v) => ({ ...v, invoice_number: e.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></Field>
+          <Field label="Purchase Order ID"><input value={form.purchase_order_id} onChange={(e) => onChange((v) => ({ ...v, purchase_order_id: e.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></Field>
+          <Field label="GRN ID"><input value={form.grn_id} onChange={(e) => onChange((v) => ({ ...v, grn_id: e.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></Field>
+          <Field label="Other Charges"><input type="number" min="0" value={form.other_charges} onChange={(e) => onChange((v) => ({ ...v, other_charges: e.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></Field>
+          <Field label="Reason"><input value={form.reason} onChange={(e) => onChange((v) => ({ ...v, reason: e.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></Field>
+          <Field label="Remarks"><input value={form.remarks} onChange={(e) => onChange((v) => ({ ...v, remarks: e.target.value }))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" /></Field>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4">
+          <button type="button" onClick={onCancel} disabled={saving} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+          <button type="button" onClick={onSave} disabled={saving} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white hover:bg-red-800 disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
