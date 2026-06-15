@@ -36,6 +36,7 @@ export default function SalesOrderListPage({
   showBulkOps    = true,
   storeOptions   = [{ value: 'all', label: 'All Regions & Stores' }],
   loading        = false,
+  showViewAction = false,
 }) {
   /* ── date helper ── */
   const todayIso = useMemo(() => {
@@ -323,13 +324,18 @@ export default function SalesOrderListPage({
                       {col.label}
                     </th>
                   ))}
+                  {showViewAction && (
+                    <th className="px-4 py-3 text-left font-semibold text-gray-600 whitespace-nowrap">
+                      Action
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={columns.length + 1}
+                      colSpan={columns.length + 1 + (showViewAction ? 1 : 0)}
                       className="text-center text-gray-400 py-16 text-xs"
                     >
                       {emptyMessage}
@@ -354,6 +360,20 @@ export default function SalesOrderListPage({
                           {row[col.key] ?? '-'}
                         </td>
                       ))}
+                      {showViewAction && (
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {row.publicToken ? (
+                            <Link
+                              href={`/invoice/${row.publicToken}`}
+                              className="inline-flex items-center rounded-md border border-[#B00000] px-3 py-1.5 text-[11px] font-semibold text-[#B00000] transition hover:bg-[#B00000] hover:text-white"
+                            >
+                              View
+                            </Link>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))
                 )}

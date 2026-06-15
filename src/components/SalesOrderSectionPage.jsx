@@ -156,6 +156,7 @@ export default function SalesOrderSectionPage({
       showBulkOps={showBulkOps}
       loading={loading}
       storeOptions={storeOptions}
+      showViewAction={view === 'invoice-sales-order'}
     />
   );
 }
