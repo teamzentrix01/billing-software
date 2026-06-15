@@ -4,6 +4,7 @@ import { query } from '@/lib/db';
 import { ensureSalesBillingSchema } from '@/lib/salesBillingSchema';
 import { ensureCustomersSchema } from '@/lib/customersSchema';
 import { ensureInventoryBatchSchema } from '@/lib/inventoryBatching';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 /**
  * GET /api/dashboard/stats
@@ -245,7 +246,7 @@ export async function GET(request) {
       );
       salesMetrics.dailyData = (dailyDataResult.rows || []).map((row) => ({
         date: row.date,
-        label: new Date(row.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+        label: formatIndianDate(row.date, '-'),
         orders: row.orders || 0,
         revenue: parseFloat(row.revenue || 0),
       }));

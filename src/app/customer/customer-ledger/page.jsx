@@ -3,15 +3,10 @@
 import MainLayout from '@/components/MainLayout';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import CustomerSearchModal from '@/components/CustomerSearchModal';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 function formatDisplayDate(iso) {
-  if (!iso) return '';
-  const d = new Date(`${iso}T00:00:00`);
-  return d.toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  return formatIndianDate(iso, '');
 }
 
 const columns = [

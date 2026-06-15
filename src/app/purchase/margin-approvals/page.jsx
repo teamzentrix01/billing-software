@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import MainLayout from '@/components/MainLayout';
+import { formatIndianDateTime } from '@/lib/dateUtils';
 
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -17,16 +18,7 @@ function money(value) {
 }
 
 function formatDate(value) {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatIndianDateTime(value, String(value || '-'));
 }
 
 function StatusPill({ status }) {

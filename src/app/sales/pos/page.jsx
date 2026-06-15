@@ -6,6 +6,7 @@ import { validatePhoneNumber } from "@/lib/phoneValidator";
 import { useRouter } from "next/navigation";
 import MainLayout from "@/components/MainLayout";
 import { fetchAuthEndpoint } from "@/lib/auth-endpoints";
+import { formatIndianDate, formatIndianDateTime } from "@/lib/dateUtils";
 
 // ============================================================================
 // UTILITIES
@@ -286,16 +287,7 @@ function formatCurrency(value) {
 }
 
 function formatReceiptDateTime(value) {
-  const date = new Date(value || Date.now());
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  }).format(date);
+  return formatIndianDateTime(value || Date.now(), "");
 }
 
 const SESSION_CLOSE_CUTOFF_HOUR = 21;
@@ -4185,9 +4177,7 @@ export default function POSPage() {
                               {bill.billNumber || "Bill #"}
                             </p>
                             <p className="text-[11px] text-slate-500 mt-0.5">
-                              {new Date(bill.createdAt).toLocaleDateString(
-                                "en-IN",
-                              )}
+                              {formatIndianDate(bill.createdAt, "-")}
                             </p>
                             <p className="text-xs text-slate-600 mt-1">
                               {bill.customerName || "Walk-in"}

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import MainLayout from '@/components/MainLayout';
 import { fetchLookup, normalizeStores } from '@/lib/purchaseLookups';
 import { useUser } from '@/hooks/useUser';
+import { formatIndianDate, toDateInputValue } from '@/lib/dateUtils';
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -43,20 +44,11 @@ function lineTax(item) {
 }
 
 function formatDate(value) {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatIndianDate(value, String(value || '-'));
 }
 
 function dateInputValue(value) {
-  if (!value) return '';
-  const raw = String(value).trim();
-  const match = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (match) return `${match[1]}-${String(match[2]).padStart(2, '0')}-${String(match[3]).padStart(2, '0')}`;
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toISOString().slice(0, 10);
+  return toDateInputValue(value);
 }
 
 async function loadStores() {

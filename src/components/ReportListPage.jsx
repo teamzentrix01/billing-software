@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import MainLayout from '@/components/MainLayout';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 const PAGE_SIZES = [10, 25, 50, 100];
 const EMPTY_ARRAY = [];
@@ -81,13 +82,7 @@ function parseDateRangeInput(value) {
 }
 
 function formatDateForReport(value) {
-  const [year, month, day] = String(value || '').split('-').map(Number);
-  if (!year || !month || !day) return '';
-  return new Date(year, month - 1, day).toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
+  return formatIndianDate(value, '');
 }
 
 function formatDateRangeForReport(from, to) {
@@ -214,9 +209,7 @@ export default function ReportsListPage({
   extraActions = null,
 }) {
   const pathname = usePathname();
-  const today = new Date().toLocaleDateString('en-GB', {
-    day: '2-digit', month: 'short', year: 'numeric',
-  });
+  const today = formatDateForReport(getTodayInputValue());
   const todayStr = `${today} - ${today}`;
 
   const [regionOptions, setRegionOptions] = useState([]);

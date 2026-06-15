@@ -4,16 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import MainLayout from '@/components/MainLayout';
 import { extractStores } from '@/lib/clientResponse';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 function formatDate(value) {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
-  return new Intl.DateTimeFormat('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }).format(date);
+  return formatIndianDate(value, '—');
 }
 
 function formatTime(value) {

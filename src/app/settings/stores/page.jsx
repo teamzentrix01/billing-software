@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import MainLayout from '@/components/MainLayout';
 import CatalogListPage from '@/components/CatalogListPage';
 import { getStoreCode } from '@/lib/storeMeta';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 export default function Page() {
   const router = useRouter();
@@ -50,13 +51,7 @@ export default function Page() {
           ),
           store_code: getStoreCode(store.meta) || '—',
           active_license: store.meta?.gstNumber || '—',
-          live_since: store.created_at
-            ? new Date(store.created_at).toLocaleDateString('en-IN', {
-                day: '2-digit',
-                month: 'short',
-                year: 'numeric',
-              })
-            : '—',
+          live_since: formatIndianDate(store.created_at, '—'),
           address_text: [store.city, store.state, store.country].filter(Boolean).join(', ') || '—',
         }));
 

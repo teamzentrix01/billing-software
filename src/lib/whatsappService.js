@@ -26,6 +26,7 @@
  */
 
 import twilio from 'twilio';
+import { formatIndianDateTime } from '@/lib/dateUtils';
 
 // ─── Lazy Twilio client ────────────────────────────────────────────────────
 let _client = null;
@@ -83,14 +84,7 @@ export function formatBillMessage({
   createdAt,
   publicToken   = null,   // ← added for digital invoice link
 }) {
-  const date = new Date(createdAt || Date.now()).toLocaleString('en-IN', {
-    day:    '2-digit',
-    month:  'short',
-    year:   'numeric',
-    hour:   '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  });
+  const date = formatIndianDateTime(createdAt || Date.now(), '-');
 
   const firstName =
     customerName && customerName !== 'Walk-in Customer'

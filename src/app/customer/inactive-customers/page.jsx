@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import MainLayout from '@/components/MainLayout';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 function formatMoney(value) {
   const number = Number(value);
@@ -10,10 +11,7 @@ function formatMoney(value) {
 }
 
 function formatDate(value) {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '-';
-  return new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
+  return formatIndianDate(value, '-');
 }
 
 export default function InactiveCustomersPage() {

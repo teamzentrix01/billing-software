@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/hooks/useUser';
 import { fetchAuthEndpoint } from '@/lib/auth-endpoints';
+import { formatIndianDateTime } from '@/lib/dateUtils';
 
 const checklistItems = [
   { label: 'Add your first products',  desc: 'Use AI import or add manually', href: '/catalog/products' },
@@ -278,9 +279,7 @@ export default function HomePage() {
                               {order.invoice_id || `Order #${order.id}`}
                             </p>
                             <p className="text-[10.5px] text-slate-400">
-                              {new Date(order.date).toLocaleDateString('en-IN', {
-                                day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
-                              })}
+                              {formatIndianDateTime(order.date, '-')}
                             </p>
                           </div>
                         </div>

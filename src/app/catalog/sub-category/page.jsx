@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import CatalogListPage from '@/components/CatalogListPage';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 const columns = [
   { key: 'sno',           label: 'S. No.',            sortable: true  },
@@ -73,9 +74,7 @@ export default function SubCategoryPage() {
     category_name: r.category_name || '—',
     sort_sequence: r.sort_sequence ?? '—',
     is_active:     r.is_active,
-    created_at:    new Date(r.created_at).toLocaleDateString('en-IN', {
-      day: '2-digit', month: 'short', year: 'numeric',
-    }),
+    created_at:    formatIndianDate(r.created_at, '—'),
   }));
 
   return (

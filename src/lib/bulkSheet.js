@@ -68,9 +68,6 @@ function normalizeRow(
 }
 
 function normalizeCellValue(value, cell = null, XLSX = null) {
-  const dateValue = getExcelDateValue(value, cell, XLSX);
-  if (dateValue) return dateValue;
-
   const displayed = String(cell?.w || "").trim();
   if (
     displayed &&
@@ -78,6 +75,10 @@ function normalizeCellValue(value, cell = null, XLSX = null) {
   ) {
     return displayed;
   }
+
+  const dateValue = getExcelDateValue(value, cell, XLSX);
+  if (dateValue) return dateValue;
+
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? "" : value;
   }

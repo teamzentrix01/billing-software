@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import MainLayout from "@/components/MainLayout";
+import { formatIndianDateTime } from "@/lib/dateUtils";
 
 function InfoGrid({ items }) {
   return (
@@ -174,7 +175,7 @@ export default function StoreDetailsPage() {
                 </h2>
                 <p className="text-sm text-gray-500 mt-1">
                   Created on{" "}
-                  {new Date(store.created_at).toLocaleString("en-IN")}
+                  {formatIndianDateTime(store.created_at, "—")}
                 </p>
               </div>
               <span

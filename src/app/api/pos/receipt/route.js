@@ -1,6 +1,7 @@
 import { query } from '@/lib/db';
 import { successResponse, errorResponse } from '@/lib/api-response';
 import { requireAuth, requirePermission, requireStore } from '@/lib/api-protection';
+import { formatIndianDateTime } from '@/lib/dateUtils';
 
 export async function POST(req) {
   try {
@@ -124,7 +125,7 @@ function generateReceiptHTML({ bill, items, store, customer }) {
       
       <div style="font-size: 10px; margin-bottom: 5mm;">
         <p><strong>Bill No:</strong> ${bill.invoice_number || 'N/A'}</p>
-        <p><strong>Date:</strong> ${new Date(bill.created_at).toLocaleString()}</p>
+        <p><strong>Date:</strong> ${formatIndianDateTime(bill.created_at, '-')}</p>
         <p><strong>Customer:</strong> ${customer.name}</p>
       </div>
       

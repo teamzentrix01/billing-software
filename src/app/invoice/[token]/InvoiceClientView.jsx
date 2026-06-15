@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { formatIndianDateTime } from '@/lib/dateUtils';
 
 // ─── Formatters ────────────────────────────────────────────────────────────
 const fmt = (v) =>
@@ -9,11 +10,7 @@ const fmt = (v) =>
   }).format(Number(v) || 0);
 
 const fmtDate = (v) => {
-  if (!v) return '—';
-  return new Date(v).toLocaleString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', hour12: true,
-  });
+  return formatIndianDateTime(v, '—');
 };
 
 const n = (v) => Number(v) || 0;

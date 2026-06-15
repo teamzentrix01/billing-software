@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import MainLayout from '@/components/MainLayout';
 import { extractStores } from '@/lib/clientResponse';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 const columns = [
   { key: 'customerId', label: 'Customer ID' },
@@ -22,14 +23,7 @@ function formatDateInput(value) {
 }
 
 function formatDisplayDate(value) {
-  if (!value) return '—';
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
+  return formatIndianDate(value, value || '—');
 }
 
 function formatMoney(value) {

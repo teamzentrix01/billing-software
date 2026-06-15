@@ -6,6 +6,7 @@ import { ensureInventoryBatchSchema } from '@/lib/inventoryBatching';
 import { ensureSalesBillingSchema } from '@/lib/salesBillingSchema';
 import { ensureStockInSchema } from '@/lib/stockInSchema';
 import { query } from '@/lib/db';
+import { formatIndianDateTime } from '@/lib/dateUtils';
 
 const RUPEE = '\u20b9';
 const MAX_ROWS = 20;
@@ -314,7 +315,7 @@ async function getActivityAnswer(message, range) {
     ],
     columns: ['Time', 'Employee', 'Action', 'Resource', 'Status'],
     rows: result.rows.map((row) => ({
-      Time: new Date(row.created_at).toLocaleString('en-IN'),
+      Time: formatIndianDateTime(row.created_at, '-'),
       Employee: row.employee,
       Action: row.action || '-',
       Resource: `${row.resource_type || '-'} #${row.resource_id}`,
@@ -374,7 +375,7 @@ async function getStockAnswer(message, range) {
     ],
     columns: ['Time', 'Employee', 'Action', 'Resource', 'Status'],
     rows: result.rows.map((row) => ({
-      Time: new Date(row.created_at).toLocaleString('en-IN'),
+      Time: formatIndianDateTime(row.created_at, '-'),
       Employee: row.employee,
       Action: row.action || '-',
       Resource: `${row.resource_type || '-'} #${row.resource_id}`,

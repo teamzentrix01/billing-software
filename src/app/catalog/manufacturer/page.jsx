@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import CatalogListPage from '@/components/CatalogListPage';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 const columns = [
   { key: 'sno',        label: 'S. No.',       sortable: true },
@@ -101,13 +102,7 @@ export default function ManufacturerPage() {
     phone: record.phone || '—',
     address: record.address || '—',
     is_active: record.is_active,
-    created_at: record.created_at
-      ? new Date(record.created_at).toLocaleDateString('en-IN', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-        })
-      : '—',
+    created_at: formatIndianDate(record.created_at, '—'),
   }));
 
   return (

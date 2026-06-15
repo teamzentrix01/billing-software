@@ -39,7 +39,7 @@ const DEFAULT_SETTINGS = [
     name: 'Default App Settings',
     code: 'default',
     description: 'Default POS application preferences.',
-    config: { timezone: 'Asia/Kolkata', currency: 'INR', dateFormat: 'DD MMM YYYY', allowOfflineBilling: true },
+    config: { timezone: 'Asia/Kolkata', currency: 'INR', dateFormat: 'DD/MM/YY', allowOfflineBilling: true },
   },
   {
     type: 'receipt-print',

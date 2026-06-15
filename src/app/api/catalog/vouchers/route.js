@@ -2,6 +2,7 @@ import { query } from '@/lib/db';
 import { successResponse, errorResponse, validationError } from '@/lib/apiResponse';
 import { ensureVouchersSchema } from '@/lib/catalogExtrasSchema';
 import { requireAuth, requirePermission } from '@/lib/api-protection';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 function toNum(v, fallback = 0) {
   if (v === '' || v === null || v === undefined) return fallback;
@@ -14,10 +15,7 @@ function toInt(v, fallback = 0) {
 }
 
 function formatDate(d) {
-  if (!d) return '—';
-  const date = new Date(d);
-  if (Number.isNaN(date.getTime())) return '—';
-  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatIndianDate(d, '—');
 }
 
 function formatValue(row) {

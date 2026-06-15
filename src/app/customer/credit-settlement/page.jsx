@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MainLayout from '@/components/MainLayout';
 import { extractStores } from '@/lib/clientResponse';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 const columns = [
   { key: 'sNo', label: 'S. No.' },
@@ -33,10 +34,7 @@ function formatDateInput(value) {
 }
 
 function formatRangeDate(value) {
-  if (!value) return '';
-  const d = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatIndianDate(value, value || '');
 }
 
 function formatMoney(value) {

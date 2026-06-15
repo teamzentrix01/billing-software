@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import MainLayout from '@/components/MainLayout';
 import { fetchAuthEndpoint } from '@/lib/auth-endpoints';
+import { formatIndianDateTime } from '@/lib/dateUtils';
 import { generateQRDataURL, getInvoiceURL } from '@/lib/qrService';
 
 function toNumber(value, fallback = 0) {
@@ -19,16 +20,7 @@ function formatCurrency(value) {
 }
 
 function formatReceiptDateTime(value) {
-  const date = new Date(value || Date.now());
-  if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  }).format(date);
+  return formatIndianDateTime(value || Date.now(), '');
 }
 
 const DEFAULT_RECEIPT_CONFIG = {
@@ -515,12 +507,12 @@ export default function ReturnsPage() {
                       </td>
                       <td className="px-3 py-3 text-gray-600">
                         {request.completed_at
-                          ? new Date(request.completed_at).toLocaleString()
+                          ? formatReceiptDateTime(request.completed_at)
                           : request.approved_at
-                          ? new Date(request.approved_at).toLocaleString()
+                          ? formatReceiptDateTime(request.approved_at)
                           : request.rejected_at
-                          ? new Date(request.rejected_at).toLocaleString()
-                          : new Date(request.created_at).toLocaleString()}
+                          ? formatReceiptDateTime(request.rejected_at)
+                          : formatReceiptDateTime(request.created_at)}
                       </td>
                       <td className="px-3 py-3">
                         {request.status === 'approved' ? (
@@ -664,7 +656,7 @@ export default function ReturnsPage() {
                           <div className="text-xs capitalize text-gray-500">{request.refund_payment_mode || request.original_payment_mode || 'cash'}</div>
                         </td>
                         <td className="px-3 py-3 text-gray-600">
-                          {request.completed_at ? new Date(request.completed_at).toLocaleString() : '-'}
+                          {request.completed_at ? formatReceiptDateTime(request.completed_at) : '-'}
                         </td>
                         <td className="px-3 py-3">
                           <button
@@ -718,7 +710,7 @@ export default function ReturnsPage() {
                       <p><strong className="text-gray-900">Customer:</strong> {searchedBill.bill?.customer_name || 'Walk-in Customer'} {searchedBill.bill?.customer_mobile ? `(${searchedBill.bill.customer_mobile})` : ''}</p>
                       <p><strong className="text-gray-900">Payment:</strong> <span className="capitalize">{searchedBill.bill?.payment_mode || 'cash'}</span></p>
                       <p><strong className="text-gray-900">Amount:</strong> Rs.{parseFloat(searchedBill.bill?.grand_total || searchedBill.bill?.total_amount || 0).toFixed(2)}</p>
-                      <p><strong className="text-gray-900">Date:</strong> {new Date(searchedBill.bill?.created_at).toLocaleString()}</p>
+                      <p><strong className="text-gray-900">Date:</strong> {formatReceiptDateTime(searchedBill.bill?.created_at)}</p>
                       <p><strong className="text-gray-900">Items Count:</strong> {searchedBill.items?.length || 0}</p>
                     </div>
                   </div>
@@ -933,9 +925,9 @@ export default function ReturnsPage() {
                     <p className="mt-1 font-semibold text-gray-900">{activeReceipt.completed_by_name || user?.name || '-'}</p>
                     <p className="text-sm text-gray-600">
                       {activeReceipt.completed_at
-                        ? new Date(activeReceipt.completed_at).toLocaleString()
+                        ? formatReceiptDateTime(activeReceipt.completed_at)
                         : getReceiptDetails(activeReceipt).completedAt
-                        ? new Date(getReceiptDetails(activeReceipt).completedAt).toLocaleString()
+                        ? formatReceiptDateTime(getReceiptDetails(activeReceipt).completedAt)
                         : '-'}
                     </p>
                   </div>

@@ -3,15 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import MainLayout from '@/components/MainLayout';
+import { formatIndianDate } from '@/lib/dateUtils';
 
 function money(value) {
   return `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
 function dateText(value) {
-  if (!value) return '-';
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleDateString('en-IN');
+  return formatIndianDate(value, String(value || '-'));
 }
 
 function normalizeList(payload) {

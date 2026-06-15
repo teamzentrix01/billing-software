@@ -72,6 +72,24 @@ async function revertTransfer(id) {
   return data;
 }
 
+async function fetchTransferDetails(id) {
+  const res = await fetch(`/api/inventory/stocktransfer/${encodeURIComponent(id)}`, { cache: 'no-store' });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load stock transfer');
+  return data;
+}
+
+async function updateTransferDetails(id, payload) {
+  const res = await fetch(`/api/inventory/stocktransfer/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to update stock transfer');
+  return data;
+}
+
 const tableHeaders = [
   'Transaction ID',
   'Invoice Number',
@@ -204,6 +222,16 @@ export default function StockTransferPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [pendingRevert, setPendingRevert] = useState(null);
   const [revertingId, setRevertingId] = useState(null);
+  const [previewTransfer, setPreviewTransfer] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [editTransfer, setEditTransfer] = useState(null);
+  const [editForm, setEditForm] = useState({
+    invoice_date: '',
+    invoice_number: '',
+    other_charges: '',
+    remarks: '',
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const visibleTableData = useMemo(() => {
     return tableData.filter((row) => {
@@ -524,6 +552,55 @@ export default function StockTransferPage() {
     setPendingRevert(row);
   };
 
+  const openPreview = async (row) => {
+    if (!row?._id) return;
+    setPreviewLoading(true);
+    setPreviewTransfer({ id: row._id, transactionId: String(row['Transaction ID'] || '').replace(/^#/, '') });
+    try {
+      const details = await fetchTransferDetails(row._id);
+      setPreviewTransfer(details);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to load stock transfer preview');
+      setPreviewTransfer(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const openEdit = async (row) => {
+    if (!row?._id) return;
+    try {
+      const details = await fetchTransferDetails(row._id);
+      setEditTransfer(details);
+      setEditForm({
+        invoice_date: details.invoice_date || '',
+        invoice_number: details.invoice_number || '',
+        other_charges: details.other_charges ?? '',
+        remarks: details.remarks || '',
+      });
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to load stock transfer');
+    }
+  };
+
+  const saveEdit = async () => {
+    if (!editTransfer?.id) return;
+    setSavingEdit(true);
+    try {
+      await updateTransferDetails(editTransfer.id, editForm);
+      setEditTransfer(null);
+      alert('Stock transfer updated successfully.');
+      loadList();
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to update stock transfer');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   const confirmRevert = async () => {
     const row = pendingRevert;
     const id = row?._id;
@@ -593,13 +670,29 @@ export default function StockTransferPage() {
         tableData={loadingList ? [] : visibleTableData}
         emptyMessage={loadingList ? 'Loading records...' : 'No Records Found'}
         rowActions={(row) => (
-          <button
-            type="button"
-            onClick={() => handleRevert(row)}
-            className="rounded-lg border border-red-200 px-3 py-1.5 text-[12px] font-semibold text-red-600 hover:bg-red-50"
-          >
-            Revert
-          </button>
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => openPreview(row)}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Preview
+            </button>
+            <button
+              type="button"
+              onClick={() => openEdit(row)}
+              className="rounded-lg border border-blue-200 px-3 py-1.5 text-[12px] font-semibold text-blue-700 hover:bg-blue-50"
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => handleRevert(row)}
+              className="rounded-lg border border-red-200 px-3 py-1.5 text-[12px] font-semibold text-red-600 hover:bg-red-50"
+            >
+              Revert
+            </button>
+          </div>
         )}
       />
 
@@ -705,7 +798,234 @@ export default function StockTransferPage() {
           onConfirm={confirmRevert}
         />
       )}
+
+      {(previewTransfer || previewLoading) && (
+        <StockTransferPreviewDialog
+          transfer={previewTransfer}
+          loading={previewLoading}
+          onClose={() => {
+            if (!previewLoading) setPreviewTransfer(null);
+          }}
+        />
+      )}
+
+      {editTransfer && (
+        <StockTransferEditDialog
+          transfer={editTransfer}
+          form={editForm}
+          onChange={setEditForm}
+          saving={savingEdit}
+          onCancel={() => {
+            if (!savingEdit) setEditTransfer(null);
+          }}
+          onSave={saveEdit}
+        />
+      )}
     </>
+  );
+}
+
+function StockTransferPreviewDialog({ transfer, loading, onClose }) {
+  const items = transfer?.items || [];
+  const totalQty = items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+  const totalCost = items.reduce(
+    (sum, item) => sum + (Number(item.qty || 0) * Number(item.cost_price || 0)),
+    Number(transfer?.other_charges || 0),
+  );
+  const totalTax = items.reduce(
+    (sum, item) => sum + (Number(item.qty || 0) * Number(item.tax_value || 0)),
+    0,
+  );
+
+  return (
+    <div className="fixed inset-0 z-[9990] flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-[2px]">
+      <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.28)]">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+          <div>
+            <h2 className="text-[16px] font-black text-slate-900">Stock Transfer Preview</h2>
+            <p className="mt-1 text-[12px] font-medium text-slate-500">
+              {transfer?.transactionId ? `#${transfer.transactionId}` : transfer?.id ? `#TRN-${transfer.id}` : 'Loading...'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={loading}
+            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+            aria-label="Close preview"
+          >
+            <i className="ti ti-x text-[18px]" />
+          </button>
+        </div>
+
+        <div className="overflow-auto px-5 py-5">
+          {loading ? (
+            <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-[13px] font-semibold text-slate-500">
+              Loading preview...
+            </p>
+          ) : (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <PreviewStat label="Source" value={transfer?.sourceName || '-'} />
+                <PreviewStat label="Destination" value={transfer?.destinationName || '-'} />
+                <PreviewStat label="Invoice Number" value={transfer?.invoice_number || '-'} />
+                <PreviewStat label="Invoice Date" value={formatDate(transfer?.invoice_date)} />
+                <PreviewStat label="Total Items" value={totalQty} />
+                <PreviewStat label="Cost" value={`Rs. ${formatCurrency(totalCost)}`} />
+                <PreviewStat label="Tax" value={`Rs. ${formatCurrency(totalTax)}`} />
+                <PreviewStat label="Status" value={transfer?.status || '-'} />
+              </div>
+
+              {transfer?.remarks && (
+                <div className="mt-4 rounded-xl border border-slate-200 p-3">
+                  <p className="text-[11px] font-bold uppercase text-slate-500">Remarks</p>
+                  <p className="mt-1 text-[13px] text-slate-700">{transfer.remarks}</p>
+                </div>
+              )}
+
+              <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
+                <table className="min-w-full divide-y divide-slate-100 text-[13px]">
+                  <thead className="bg-slate-50 text-left text-[11px] font-bold uppercase text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2">Product</th>
+                      <th className="px-3 py-2">Qty</th>
+                      <th className="px-3 py-2">MRP</th>
+                      <th className="px-3 py-2">Selling</th>
+                      <th className="px-3 py-2">Cost</th>
+                      <th className="px-3 py-2">Tax</th>
+                      <th className="px-3 py-2">Line Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {items.length ? (
+                      items.map((item) => (
+                        <tr key={item.id || item.product_id}>
+                          <td className="px-3 py-3 text-slate-900">
+                            <div className="font-semibold">{item.product_name || item.name || 'Product'}</div>
+                            <div className="text-[11px] text-slate-500">SKU: {item.sku || '-'}</div>
+                          </td>
+                          <td className="px-3 py-3 text-slate-700">{Number(item.qty || 0)}</td>
+                          <td className="px-3 py-3 text-slate-700">{formatCurrency(item.mrp)}</td>
+                          <td className="px-3 py-3 text-slate-700">{formatCurrency(item.selling_price)}</td>
+                          <td className="px-3 py-3 text-slate-700">{formatCurrency(item.cost_price)}</td>
+                          <td className="px-3 py-3 text-slate-700">{formatCurrency(item.tax_value)}</td>
+                          <td className="px-3 py-3 font-semibold text-slate-900">
+                            {formatCurrency(Number(item.qty || 0) * Number(item.cost_price || 0))}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td className="px-3 py-8 text-center text-slate-500" colSpan={7}>
+                          No items found
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StockTransferEditDialog({ transfer, form, onChange, saving, onCancel, onSave }) {
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-[2px]">
+      <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.28)]">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+          <div>
+            <h2 className="text-[16px] font-black text-slate-900">Edit Stock Transfer</h2>
+            <p className="mt-1 text-[12px] font-medium text-slate-500">
+              #{transfer.transactionId || `TRN-${transfer.id}`} · {transfer.sourceName || '-'} to {transfer.destinationName || '-'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={saving}
+            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+            aria-label="Close edit dialog"
+          >
+            <i className="ti ti-x text-[18px]" />
+          </button>
+        </div>
+
+        <div className="px-5 py-5">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Invoice Date">
+              <input
+                type="date"
+                value={form.invoice_date}
+                onChange={(e) => onChange((current) => ({ ...current, invoice_date: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-[13px] text-slate-700 outline-none focus:border-blue-400"
+              />
+            </Field>
+            <Field label="Invoice Number">
+              <input
+                value={form.invoice_number}
+                onChange={(e) => onChange((current) => ({ ...current, invoice_number: e.target.value }))}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-[13px] text-slate-700 outline-none focus:border-blue-400"
+                placeholder="Invoice number"
+              />
+            </Field>
+          </div>
+
+          <Field label="Other Charges">
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.other_charges}
+              onChange={(e) => onChange((current) => ({ ...current, other_charges: e.target.value }))}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-[13px] text-slate-700 outline-none focus:border-blue-400"
+              placeholder="Other charges"
+            />
+          </Field>
+
+          <Field label="Remarks">
+            <textarea
+              rows={4}
+              value={form.remarks}
+              onChange={(e) => onChange((current) => ({ ...current, remarks: e.target.value }))}
+              className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-[13px] text-slate-700 outline-none focus:border-blue-400"
+              placeholder="Remarks"
+            />
+          </Field>
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={saving}
+            className="min-w-[96px] rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[13px] font-bold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving}
+            className="min-w-[112px] rounded-xl bg-blue-600 px-4 py-2.5 text-[13px] font-bold text-white transition-colors hover:bg-blue-700 disabled:opacity-60"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PreviewStat({ label, value }) {
+  return (
+    <div className="rounded-xl border border-slate-200 p-3">
+      <p className="text-[11px] font-bold uppercase text-slate-500">{label}</p>
+      <p className="mt-1 break-words text-[13px] font-semibold capitalize text-slate-900">{value}</p>
+    </div>
   );
 }
 

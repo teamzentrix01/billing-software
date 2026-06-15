@@ -31,7 +31,7 @@ export const settingsPageConfigs = {
     fields: [
       { key: 'timezone', label: 'Timezone', defaultValue: 'Asia/Kolkata' },
       { key: 'currency', label: 'Currency', defaultValue: 'INR' },
-      { key: 'dateFormat', label: 'Date Format', defaultValue: 'DD MMM YYYY' },
+      { key: 'dateFormat', label: 'Date Format', defaultValue: 'DD/MM/YY' },
       { key: 'allowOfflineBilling', label: 'Allow Offline Billing', type: 'checkbox', defaultValue: true },
     ],
   },

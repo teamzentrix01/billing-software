@@ -14,17 +14,17 @@ export function toDateInputValue(value) {
   const raw = String(value).trim();
   if (!raw) return "";
 
-  const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (isoMatch) {
-    return formatDateParts(isoMatch[1], isoMatch[2], isoMatch[3], "yyyy-mm-dd");
-  }
-
   const indianMatch = raw.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})$/);
   if (indianMatch) {
     const year = expandYear(indianMatch[3]);
     return isValidDateParts(year, indianMatch[2], indianMatch[1])
       ? formatDateParts(year, indianMatch[2], indianMatch[1], "yyyy-mm-dd")
       : "";
+  }
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (isoMatch) {
+    return formatDateParts(isoMatch[1], isoMatch[2], isoMatch[3], "yyyy-mm-dd");
   }
 
   const parsed = new Date(raw);
@@ -55,6 +55,9 @@ export function formatIndianDateTime(value, fallback = "-") {
   });
   return `${datePart}, ${timePart}`;
 }
+
+export const formatDate = formatIndianDate;
+export const formatDateTime = formatIndianDateTime;
 
 function expandYear(value) {
   const year = Number(value);

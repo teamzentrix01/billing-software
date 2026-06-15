@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import MainLayout from '@/components/MainLayout';
+import { formatIndianDate, formatIndianDateTime } from '@/lib/dateUtils';
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
@@ -40,27 +41,13 @@ const moneyKeys = new Set([
 ]);
 
 function formatDisplayDate(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  return formatIndianDate(iso, '');
 }
 
 function formatCellValue(key, value) {
   if (value === null || value === undefined || value === '') return '—';
   if (key === 'sessionStartAt' || key === 'sessionEndAt') {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '—';
-    return date.toLocaleString('en-GB', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    return formatIndianDateTime(value, '—');
   }
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (moneyKeys.has(key)) {
