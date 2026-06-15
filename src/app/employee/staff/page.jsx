@@ -605,17 +605,18 @@ export default function EmployeeStaffPage() {
   const handleSave = async () => {
     if (!form.firstName.trim()) return alert('First name is required');
     if (!form.username.trim()) return alert('Username is required');
-    if (!form.mobileNumber.trim()) return alert('Mobile number is required');
-    if (!/^\d{10}$/.test(form.mobileNumber)) return alert('Mobile number must be exactly 10 digits');
     if (!form.emailAddress.trim()) return alert('Email address is required');
     if (!isValidEmail(form.emailAddress)) return alert('Enter a valid email address');
     if (!form.roleName.trim()) return alert('Role is required');
+    const systemRole = form.roleName.trim().toLowerCase().replace(/\s+/g, '_');
+    const isSuperAdminRole = systemRole === 'super_admin' || systemRole === 'superadmin';
+    if (!isSuperAdminRole && !form.mobileNumber.trim()) return alert('Mobile number is required');
+    if (form.mobileNumber.trim() && !/^\d{10}$/.test(form.mobileNumber)) return alert('Mobile number must be exactly 10 digits');
     if (!editingId && !form.password.trim()) return alert('Password is required');
     if (!editingId && !form.confirmPassword.trim()) return alert('Confirm password is required');
     if (form.password && form.password !== form.confirmPassword) return alert('Passwords do not match');
     if (form.permissions.length === 0) return alert('Select at least one permission');
 
-    const systemRole = form.roleName.trim().toLowerCase().replace(/\s+/g, '_');
     if ((systemRole === 'admin' || systemRole === 'manager') && !form.regionStore) {
       return alert('Select a store for Admin/Manager access');
     }

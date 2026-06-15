@@ -142,6 +142,74 @@ function mapEmployeeRow(row) {
   };
 }
 
+async function ensureSuperAdminEmployeeRows() {
+  await ensureUsersTable();
+
+  await query(
+    `UPDATE employees e
+     SET user_id = u.id,
+         role_name = 'super_admin',
+         permissions = CASE
+           WHEN COALESCE(jsonb_array_length(e.permissions), 0) = 0 THEN '["*"]'::jsonb
+           ELSE e.permissions
+         END,
+         updated_at = NOW()
+     FROM users u
+     WHERE u.role = 'super_admin'
+       AND e.user_id IS NULL
+       AND LOWER(e.email_address) = LOWER(u.email)`
+  );
+
+  await query(
+    `INSERT INTO employees (
+       user_id,
+       username,
+       first_name,
+       mobile_number,
+       email_address,
+       role_name,
+       permissions,
+       user_type,
+       employment_type,
+       employment_status,
+       meta,
+       created_at,
+       updated_at
+     )
+     SELECT u.id,
+            CASE
+              WHEN NOT EXISTS (
+                SELECT 1 FROM employees existing
+                WHERE LOWER(existing.username) = LOWER(SPLIT_PART(u.email, '@', 1))
+              )
+              THEN SPLIT_PART(u.email, '@', 1)
+              ELSE 'superadmin_' || u.id
+            END,
+            COALESCE(NULLIF(u.name, ''), 'Super Admin'),
+            CASE
+              WHEN REGEXP_REPLACE(COALESCE(u.phone, ''), '\\D', '', 'g') ~ '^\\d{10}$'
+              THEN REGEXP_REPLACE(u.phone, '\\D', '', 'g')
+              ELSE NULL
+            END,
+            u.email,
+            'super_admin',
+            '["*"]'::jsonb,
+            'Super Admin',
+            'Payroll',
+            'Active',
+            jsonb_build_object('systemBackfilled', true, 'source', 'users.super_admin'),
+            NOW(),
+            NOW()
+     FROM users u
+     WHERE u.role = 'super_admin'
+       AND NOT EXISTS (
+         SELECT 1 FROM employees e
+         WHERE e.user_id = u.id
+            OR LOWER(e.email_address) = LOWER(u.email)
+       )`
+  );
+}
+
 export async function GET(request) {
   try {
     await ensureEmployeesSchema();
@@ -162,6 +230,8 @@ export async function GET(request) {
           AND us.is_active = TRUE
           AND us.store_id = ANY($${params.length}::int[])
       )`);
+    } else {
+      await ensureSuperAdminEmployeeRows();
     }
 
     const res = await query(

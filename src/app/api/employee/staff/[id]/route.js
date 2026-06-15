@@ -117,7 +117,7 @@ export async function PUT(request, { params }) {
     const gender = toString(body.gender);
     const password = toString(body.password);
     const confirmPassword = toString(body.confirm_password || body.confirmPassword);
-    const mobileNumber = normalizePhone(body.mobile_number || body.mobileNumber || '');
+    let mobileNumber = normalizePhone(body.mobile_number || body.mobileNumber || '');
     const emailAddress = toString(body.email_address || body.emailAddress).toLowerCase();
     const roleId = body.role_id ?? body.roleId ?? null;
     const roleName = toString(body.role_name || body.roleName);
@@ -152,28 +152,40 @@ export async function PUT(request, { params }) {
       if (storeCheck.error) return storeCheck.error;
     }
 
+    await client.query('BEGIN');
+
+    const existingRes = await client.query(
+      `SELECT e.id, e.user_id, u.phone AS user_phone
+       FROM employees e
+       LEFT JOIN users u ON u.id = e.user_id
+       WHERE e.id = $1
+       FOR UPDATE OF e`,
+      [employeeId]
+    );
+    const existing = existingRes.rows[0];
+    if (!existing) {
+      await client.query('ROLLBACK');
+      return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+    }
+
+    if (!mobileNumber && systemRole === 'super_admin') {
+      mobileNumber = normalizePhone(existing.user_phone || '');
+    }
+
     const validationError = validateEmployeeInput({
       username,
       firstName,
       password,
       confirmPassword,
-      mobileNumber,
+      mobileNumber: mobileNumber || (systemRole === 'super_admin' ? '0000000000' : ''),
       emailAddress,
       roleId,
       roleName,
       permissions,
     });
     if (validationError) {
-      return NextResponse.json({ error: validationError }, { status: 400 });
-    }
-
-    await client.query('BEGIN');
-
-    const existingRes = await client.query('SELECT id, user_id FROM employees WHERE id = $1 FOR UPDATE', [employeeId]);
-    const existing = existingRes.rows[0];
-    if (!existing) {
       await client.query('ROLLBACK');
-      return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
+      return NextResponse.json({ error: validationError }, { status: 400 });
     }
 
     if (auth.user.role !== 'super_admin' && existing.user_id) {
@@ -263,14 +275,27 @@ export async function PUT(request, { params }) {
           `UPDATE users
            SET name = $2, email = $3, phone = $4, role = $5, password_hash = $6, updated_at = NOW()
            WHERE id = $1`,
-          [existing.user_id, [firstName, lastName].filter(Boolean).join(' ').trim() || username, emailAddress, mobileNumber, systemRole, passwordHash]
+          [
+            existing.user_id,
+            [firstName, lastName].filter(Boolean).join(' ').trim() || username,
+            emailAddress,
+            mobileNumber || existing.user_phone,
+            systemRole,
+            passwordHash,
+          ]
         );
       } else {
         await client.query(
           `UPDATE users
            SET name = $2, email = $3, phone = $4, role = $5, updated_at = NOW()
            WHERE id = $1`,
-          [existing.user_id, [firstName, lastName].filter(Boolean).join(' ').trim() || username, emailAddress, mobileNumber, systemRole]
+          [
+            existing.user_id,
+            [firstName, lastName].filter(Boolean).join(' ').trim() || username,
+            emailAddress,
+            mobileNumber || existing.user_phone,
+            systemRole,
+          ]
         );
       }
 
