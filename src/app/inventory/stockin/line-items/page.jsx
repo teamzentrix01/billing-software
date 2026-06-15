@@ -984,7 +984,8 @@ function LineItemsContent() {
                 </div>
               </div>
 
-              <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4">
+              <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(260px,1fr)] gap-4 overflow-hidden p-4">
+                <div className="min-h-0 overflow-hidden">
                 {sourceType === "vendor" && selectedVendorIds.length === 0 && (
                   <div className="mb-4 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center">
                     <p className="text-[13px] font-medium text-gray-700">
@@ -1011,7 +1012,7 @@ function LineItemsContent() {
                         Available Products ({products.length})
                       </p>
                     </div>
-                    <div className="max-h-[260px] divide-y divide-gray-100 overflow-y-auto">
+                    <div className="max-h-[190px] divide-y divide-gray-100 overflow-y-auto">
                       {products.map((p) => (
                         <button
                           key={p.id}
@@ -1078,10 +1079,11 @@ function LineItemsContent() {
                       </button>
                     </div>
                   )}
+                </div>
 
                 {filteredCart.length > 0 ? (
                   isWarehouseDestination ? (
-                    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-lg border border-gray-100 p-2">
+                    <div className="min-h-0 space-y-3 overflow-y-auto rounded-lg border border-gray-100 p-2">
                       {filteredCart.map((it) => (
                         <div
                           key={it.line_id}
@@ -1203,7 +1205,7 @@ function LineItemsContent() {
                       ))}
                     </div>
                   ) : (
-                    <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-gray-100">
+                    <div className="min-h-0 overflow-y-auto rounded-lg border border-gray-100">
                     <table className="w-full">
                       <thead>
                         <tr className="border-b border-gray-100">
